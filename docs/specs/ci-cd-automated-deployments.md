@@ -64,7 +64,7 @@ The CI fails the job if any required line/key is missing.
   ```json
   {
     "contracts": [
-      { "sourcePath": "src/Foo.sol:Foo", "contractName": "Foo", "address": "0x..." }
+      { "sourcePathAndName": "src/Foo.sol:Foo", "address": "0x..." }
     ]
   }
   ```
@@ -125,7 +125,7 @@ contract Deploy is Script {
 * **On merge/push to `main`:** run the same pipeline against **mainnet (configurable)** under a protected environment. The job must not change the production proxy’s implementation. It may deploy a new implementation or a separate staging proxy for validation. All production upgrades remain manual and explicit.
 * **Upgrade-safety validation** runs on pushes to dev/main, PRs to/from branches with 'release' or to dev/main, or manual trigger. This is to prevent unsafe upgrades before they hit production.
 * **Repeatability:** workflows are copy/paste-able across repos with minimal variable changes.
-* **Artifact schema:** every deployment emits one JSON containing, per contract: `contractName`, `address`, `sourcePath`.
+* **Artifact schema:** every deployment emits one JSON containing, per contract:`sourcePathAndName`, `address`.
 
 ---
 
@@ -187,7 +187,7 @@ contract Deploy is Script {
 5. **Parse deployed addresses** from script output into `GITHUB_OUTPUT`.
 6. **Verify** each contract on **Blockscout** (**testnet**) with correct compiler metadata & constructor args; wait for indexing (sleep with backoff).
 7. **Summarize** in `$GITHUB_STEP_SUMMARY` (Markdown table with explorer links).
-8. **Save artifacts** to `deployments/testnet/deployment.json` including, for each contract: `address`, `contractName`, `sourcePath`.
+8. **Save artifacts** to `deployments/testnet/deployment.json` including, for each contract: `sourcePathAndName`, `address`.
 9. **Comment on PR** with addresses + links.
    **Post-condition:** PR contains validated, verified testnet deployment with artifacts.
 
@@ -198,7 +198,7 @@ contract Deploy is Script {
 1. **CI triggers** on `push` to `main`.
 2. Same steps 2–3 as Path A.
 3. **Deploy (non-disruptive & upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) to **mainnet** with `MAINNET_PRIVATE_KEY`, `MAINNET_RPC_URL`. Deploy a staging proxy+implementation or deploy a new implementation only for upgrade validation. Do not point the production proxy to the new implementation automatically.
-4. **Parse outputs**, **verify on Blockscout (mainnet)**, **summarize**, and write `deployments/mainnet/deployment.json` with `address`, `contractName`, `sourcePath` per contract.
+4. **Parse outputs**, **verify on Blockscout (mainnet)**, **summarize**, and write `deployments/mainnet/deployment.json` with `sourcePathAndName`, `address` per contract.
 
 #### Upgrade-safety — Required checks (must pass)
 
@@ -308,15 +308,11 @@ classDiagram
 class DeploymentArtifact {
   +contracts: ContractEntry[]
 }
-
 class ContractEntry {
-  +contractName: string
-  +sourcePath: string  // e.g. "src/Foo.sol:Foo"
+  +sourcePathAndName: string  // e.g. "src/Foo.sol:Foo"
   +address: address
 }
-
 DeploymentArtifact --> ContractEntry : includes
-
 ```
 
 ---
