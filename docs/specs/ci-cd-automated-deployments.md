@@ -102,14 +102,6 @@ contract Deploy is Script {
 }
 ```
 
-
-
-### Stakeholders
-
-* **Smart Contracts Team** — authors of contracts and deployment scripts.
-* **Frontend Team** — consume deployed addresses and ABIs; should not manage deployment complexity.
-* **DevOps** — maintain GitHub Actions, secrets, and environment protections.
-
 ---
 
 ## 2. Motivation
@@ -119,9 +111,8 @@ contract Deploy is Script {
 * **On every PR to `main`:** build, test, upgrade-safety validate, deploy to **testnet**, verify on **Blockscout**, publish addresses + explorer links in **PR comment** and **Step Summary**, and upload **deployment artifacts**.
 * **On merge/push to `main`:** run the same pipeline against **mainnet (configurable)** under a protected environment. The job must not change the production proxy’s implementation. It may deploy a new implementation or a separate staging proxy for validation. All production upgrades remain manual and explicit.
 * **Upgrade-safety validation** runs on pushes to dev/main, PRs to/from branches with 'release' or to dev/main, or manual trigger. This is to prevent unsafe upgrades before they hit production.
-* **Frontend enablement:** a single, consistent JSON artifact + step summary table so frontends can spin up with new addresses automatically.
 * **Repeatability:** workflows are copy/paste-able across repos with minimal variable changes.
-* **Artifact schema:** every deployment emits one JSON containing, per contract: `name`, `address`, `sourcePath`, `kind` (`proxy` | `implementation` | `standalone`), and `{ "proxyAdmin": "...", "implementation": "...", "txHash": "...", "chainId": number }`.
+* **Artifact schema:** every deployment emits one JSON containing, per contract: `contractName`, `address`, `sourcePath`.
 
 ---
 
@@ -165,15 +156,6 @@ contract Deploy is Script {
 | Hardhat instead of Foundry                   | Familiar to some teams | Slower builds; mixed tooling                  |
 | Keep Etherscan for testnet                   | Familiar UX            | Split verification logic; higher maintenance  |
 | Manual-only deploys                          | Safety                 | Slower feedback, prone to human error         |
-
-### Relevant Metrics
-
-* **Pipeline success rate** (per workflow).
-* **Median deploy + verify time** (per network).
-* **Verification success rate** (Blockscout API).
-* **Incidents: failed upgrade-safety checks** (trend).
-* **Artifact adoption** (downloads/references by frontend).
-* **Flakiness**: rerun rate on CI.
 
 ---
 
