@@ -207,42 +207,79 @@ contract Deploy is Script {
 
 ```mermaid
 sequenceDiagram
-   autonumber
-   participant Dev as Developer
-   participant GH as GitHub Actions
-   participant RPC as RPC (testnet/mainnet)
-   participant BS as Blockscout API
-   participant ART as Artifact Store
+  autonumber
+  participant Dev as Developer
+  participant GH as GitHub Actions
+  participant RPC as RPC (testnet/mainnet)
+  participant BS as Blockscout API
+  participant ART as Artifact Store
 
-   Dev->>GH: Open PR to main / Push to main
-   GH->>GH: Checkout, Install Foundry, Build, Test
-   GH->>GH: Upgrade Safety Validation
-   alt PR -> Testnet
-     GH->>RPC: forge script --broadcast (Testnet)
-   else Push -> Mainnet
-     GH->>RPC: forge script --broadcast (Mainnet)
-   end
-   RPC-->>GH: Tx receipts + contract addresses
-   GH->>BS: verify-contract (per module)
-   BS-->>GH: Verification OK
-   GH->>ART: Upload deployment.json
-   GH-->>Dev: PR Comment / Step Summary with links
+  Dev->>GH: Open PR to main / Push to main
+  GH->>GH: Checkout, Install Foundry, Build, Test
+  GH->>GH: Upgrade Safety Validation (build + check snapshots)
+
+  alt previous snapshots present
+    GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
+    note right of GH: Validator performs:\n1) Storage layout diff (append-only)\n2) Proxy semantics (Transparent/UUPS)\n3) Dry-run upgrade + invariants\n4) Reporting (diff/invariant)
+    alt validation OK
+      GH-->>GH: status = pass
+    else validation FAIL
+      GH-->>GH: status = fail (block deployment)
+    end
+  else no snapshots (initial deployment)
+    GH-->>GH: skip validator (log message)
+  end
+
+  alt PR -> Testnet
+    GH->>RPC: forge script --broadcast (Testnet)
+  else Push -> Mainnet
+    GH->>RPC: forge script --broadcast (Mainnet)
+  end
+
+  RPC-->>GH: Tx receipts + contract addresses
+  GH->>BS: verify-contract (per module)
+  BS-->>GH: Verification OK / pending
+  GH->>ART: Upload deployment.json
+  GH-->>Dev: PR Comment / Step Summary with links
 ```
 
 ```mermaid
 stateDiagram
-   [*] --> Pending
-   Pending --> Building : checkout/install/build/test
-   Building --> Validating : upgrade-safety
-   Validating --> Deploying : ok
-   Validating --> Failed : validation error
-   Deploying --> Verifying : addresses parsed
-   Deploying --> Failed : broadcast error
-   Verifying --> Publishing : verification OK/partial
-   Verifying --> Publishing : continue-on-error (flagged)
-   Publishing --> Succeeded
-   Failed --> [*]
-   Succeeded --> [*]
+  [*] --> Pending
+  Pending --> Building : checkout/install/build/test
+  Building --> Validating : upgrade-safety
+
+  state Validating {
+    [*] --> SnapshotCheck
+    SnapshotCheck --> InitialSkip : no test/upgrades/previous/*.sol
+    SnapshotCheck --> StorageDiff : previous present
+
+    StorageDiff --> ProxyChecks : diff OK
+    StorageDiff --> ValidationFailed : diff error
+
+    ProxyChecks --> DryRun : semantics OK
+    ProxyChecks --> ValidationFailed : proxy error
+
+    DryRun --> ReportOK : invariants OK
+    DryRun --> ValidationFailed : invariant/ACL error
+
+    ReportOK --> [*]
+    InitialSkip --> [*]
+    ValidationFailed --> [*]
+  }
+
+  Validating --> Deploying : pass or initial skip
+  Validating --> Failed : validation error
+
+  Deploying --> Verifying : addresses parsed
+  Deploying --> Failed : broadcast error
+
+  Verifying --> Publishing : verification OK/partial
+  Verifying --> Publishing : continue-on-error (flagged)
+
+  Publishing --> Succeeded
+  Failed --> [*]
+  Succeeded --> [*]
 ```
 
 ```mermaid
@@ -257,7 +294,7 @@ class DeploymentArtifact {
 }
 class ContractEntry {
   +contractName: string
-  +sourcePath: string  // e.g. "src/CommuneOS.sol:CommuneOS"
+  +sourcePath: string  // e.g. "src/Foo.sol:Foo"
   +address: address
   +kind: string        // "proxy" | "implementation" | "standalone"
 }
@@ -265,8 +302,17 @@ class UpgradeSnapshots {
   +previous: /test/upgrades/previous/*.sol
   +current:  /test/upgrades/current/*.sol
 }
+class ValidatorReport {
+  +status: "pass" | "fail" | "initial-skip"
+  +storageDiff: string
+  +failedInvariant: string
+  +proxyCheck: string  // e.g., "proxiableUUID mismatch"
+}
+
 DeploymentArtifact --> ContractEntry : includes
 DeploymentArtifact --> UpgradeSnapshots : produced after validation
+UpgradeSnapshots --> ValidatorReport : inputs to validator
+ValidatorReport --> DeploymentArtifact : summarized in CI logs/summary
 ```
 
 ---
