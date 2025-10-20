@@ -18,9 +18,91 @@
   * **Mainnet (configurable)**: deploy on push/merge to `main` under a protected environment.
   * **Upgrade safety validation** via flattened previous/current contracts and `script/upgrades/ValidateUpgrade.s.sol`.
   * **Flattening** step to persist contract snapshots to `test/upgrades/previous`.
-  * Deployment scripts are standardized around `script/Deploy.s.sol` (entry point).
 * Direction: **adopt Blockscout verification** and **drop Etherscan** support.
 * Intended to be reused across multiple repos; not for continuous auto-upgrades of production, but to guarantee end-to-end deployability and unblock frontends.
+
+### Standardized Deployment Script
+
+To make workflows reusable across repos, CI expects a **canonical wrapper**:
+
+- **Entry point (name):** `script/Deploy.s.sol:Deploy`
+- **Behavior:** Reads the target deploy task from an env var and delegates to contract-specific script(s).
+  - Env: `DEPLOY_TARGET` (e.g., `ButteredBread`, `NFTMultiplier`, etc.)
+  - Env: `RPC_URL`, `PRIVATE_KEY`
+  - Optional Env: `PROXY_ADMIN_ADDRESS`
+- **Invocation (canonical):**
+  ```bash
+  forge script script/Deploy.s.sol:Deploy \
+    --rpc-url "$RPC_URL" \
+    --broadcast \
+    --slow \
+    -vvvv
+  ```
+
+* **Required stdout lines (for GitHub parser), one per line:**
+
+  ```
+  IMPLEMENTATION 0x...
+  PROXY 0x...
+  PROXY_ADMIN 0x...
+  <CONTRACT_NAME> 0x...
+  ```
+
+* **Required GITHUB_OUTPUT keys:**
+
+  ```
+  implementation=0x...
+  proxy=0x...
+  proxy_admin=0x...
+  <lower_snake_case_name>=0x...
+  ```
+
+* **Artifact expectation:** CI will build `deployments/<env>/deployment.json` from those outputs using the minimal schema:
+
+  ```json
+  {
+    "network": "mainnet|testnet",
+    "chainId": 100,
+    "timestamp": "ISO8601",
+    "gitCommit": "<sha>",
+    "contracts": [
+      { "sourcePath": "src/Foo.sol:Foo", "address": "0x..." }
+    ]
+  }
+  ```
+
+* **Deploy script (example):**
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+import "forge-std/Script.sol";
+import "forge-std/console2.sol";
+
+// import specific scripts or call their libraries here
+
+contract Deploy is Script {
+  function run() external {
+    string memory target = vm.envString("DEPLOY_TARGET"); // e.g., "ButteredBread"
+    vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
+
+    if (keccak256(bytes(target)) == keccak256("ButteredBread")) {
+      // call into DeployButteredBread flow or library
+      // emit standard logs:
+      console2.log("PROXY 0x...");         // address of deployed proxy
+      console2.log("IMPLEMENTATION 0x..."); // implementation address
+      console2.log("PROXY_ADMIN 0x...");    // admin address
+      console2.log("BUTTEREDBREAD 0x...");  // main contract address
+    } else {
+      revert("Unknown DEPLOY_TARGET");
+    }
+
+    vm.stopBroadcast();
+  }
+}
+```
+
+
 
 ### Stakeholders
 
