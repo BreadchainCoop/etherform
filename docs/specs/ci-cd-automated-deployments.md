@@ -110,6 +110,11 @@ contract Deploy is Script {
 
 ```
 
+### Stakeholders
+
+* **Smart Contracts Team** — authors of contracts and deployment scripts.
+* **DevOps** — maintain GitHub Actions, secrets, and environment protections.
+
 ---
 
 ## 2. Motivation
