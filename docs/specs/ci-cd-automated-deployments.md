@@ -5,7 +5,7 @@
 ### Problem Statement: What hurts today?
 
 * Manual, inconsistent deployments of smart contracts across environments.
-* Frontend teams are blocked or forced to understand contract deployment details.
+* Frontend team might be blocked by contract deployment details.
 * Risky upgrades without automated safety checks.
 * Fragmented verification (Etherscan vs Blockscout) and inconsistent artifacts/summaries.
 
@@ -16,7 +16,7 @@
 
   * **Holesky Testnet** deploy on PR to `main`.
   * **Gnosis Mainnet** deploy on push to `main`.
-  * **Upgrade safety validation** via flattened previous/current contracts and `ValidateUpgrade.s.sol`.
+  * **Upgrade safety validation** via flattened previous/current contracts and `script/upgrades/ValidateUpgrade.s.sol`.
   * **Flattening** step to persist contract snapshots to `test/upgrades/previous`.
   * Deployment scripts are standardized around `script/Deploy.s.sol` (entry point).
 * Direction: **adopt Blockscout verification** and **drop Etherscan** support.
@@ -25,10 +25,8 @@
 ### Stakeholders
 
 * **Smart Contracts Team** — authors of contracts and deployment scripts.
-* **Frontend Team(s)** — consume deployed addresses and ABIs; should not manage deployment complexity.
-* **DevOps / Platform** — maintain GitHub Actions, secrets, and environment protections.
-* **QA / Security** — review upgrade safety and verification outcomes.
-* **External Systems** — RPC providers (Holesky, Gnosis), Blockscout APIs, GitHub environments/artifacts.
+* **Frontend Team** — consume deployed addresses and ABIs; should not manage deployment complexity.
+* **DevOps** — maintain GitHub Actions, secrets, and environment protections.
 
 ---
 
@@ -36,12 +34,12 @@
 
 ### Goals & Success Stories
 
-* **On every PR to `main`:** build, test, upgrade-safety validate, deploy to **Holesky**, verify on **Blockscout**, publish addresses + explorer links in **PR comment** and **Step Summary**, and upload canonical **deployment artifacts**.
-* **On merge/push to `main`:** run the same pipeline against Gnosis mainnet under a protected environment, but treat it as non-disruptive mainnet validation: deploy upgradeable artifacts (proxy + implementation) to staging addresses or deploy a new implementation only; do not modify the production proxy’s implementation automatically. Verify on Blockscout and publish artifacts.
-* **Upgrade-safety validation** runs on PRs and selected pushes to prevent unsafe upgrades before they hit production.
+* **On every PR to `main`:** build, test, upgrade-safety validate, deploy to **Holesky**, verify on **Blockscout**, publish addresses + explorer links in **PR comment** and **Step Summary**, and upload **deployment artifacts**.
+* **On merge/push to `main`:** run the same pipeline against Gnosis mainnet under a protected environment. The job must not change the production proxy’s implementation. It may deploy a new implementation or a separate staging proxy for validation. All production upgrades remain manual and explicit.
+* **Upgrade-safety validation** runs on pushes to dev/main, PRs to/from branches with 'release' or to dev/main, or manual trigger. This is to prevent unsafe upgrades before they hit production.
 * **Frontend enablement:** a single, consistent JSON artifact + step summary table so frontends can spin up with new addresses automatically.
 * **Repeatability:** workflows are copy/paste-able across repos with minimal variable changes.
-* **Artifact schema:** every deployment produces a JSON with address, contractName, and sourcePath per contract, plus network metadata.
+* **Artifact schema:** every deployment emits one JSON containing, per contract: `name`, `address`, `sourcePath`, `kind` (`proxy` | `implementation` | `standalone`), and `{ "proxyAdmin": "...", "implementation": "...", "txHash": "...", "chainId": number }`.
 
 ---
 
@@ -51,8 +49,9 @@
 
 * Automatic continuous upgrades of production on every commit (we deploy on `main` merges, not continuously).
 * Updating the production proxy implementation automatically on every merge. Production upgrades remain manual/explicit.
-* Multi-chain beyond Holesky (17000) and Gnosis (100) for now.
 * Extensive security auditing (we only include upgrade-safety & verification checks here).
+* Changing ProxyAdmin ownership or production proxy state via CI (out of scope).
+* On-chain migrations or data transforms (out of scope).
 
 ### Technical Functionality / Off-Scope Reasoning / Tradeoffs
 
@@ -130,12 +129,12 @@
 | -- | ------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------- |
 | A1 | Missing secrets                 | Job fails early              | Fail fast with clear log; doc required secrets                                                    |
 | A2 | RPC outage / rate limit         | Deploy/verify step fails     | Auto-retry (limited), otherwise fail with guidance                                                |
-| A3 | Blockscout indexing slow        | Verify timeouts              | Exponential backoff sleeps; continue-on-error for non-critical modules if needed; flag in summary |
+| A3 | Blockscout indexing slow        | Verify timeouts              | Bounded backoff (e.g., 3 attempts). If still pending, mark “Verification pending” in summary and succeed the job. |
 | A4 | Upgrade-safety fails            | Block deploy jobs            | Mark PR red; link to diff and validator logs                                                      |
 | A5 | Foundry toolchain install error | Build step fails             | Re-run workflow; pin known-good versions                                                          |
 | A6 | Submodule fetch error           | Checkout fails               | Ensure `submodules: recursive`; fallback to `fetch-depth: 0`                                      |
 | A7 | Gas/nonce issues                | Broadcast fails              | Use `--slow` and clean nonce; document funding and nonce hygiene                                  |
-| A8 | Parsing deploy output fails     | Missing addresses in outputs | Make parser stricter; print raw output to logs; fail with actionable message                      |
+| A8 | Parsing deploy output fails     | Missing addresses in outputs | Fail with a clear message and dump raw `forge script` output for triage.                          |
 | A9 | Artifact upload fails           | Missing artifacts in run     | Re-upload step; store to workspace before upload                                                  |
 
 ---
@@ -213,7 +212,7 @@ DeploymentArtifact --> UpgradeSnapshots : produced after validation
 * **Blockscout indexing lag**: we add waits/backoff. Verification may be marked as “pending” in summary and retried by re-running workflow.
 * **Constructor args**: pulled via `cast abi-encode` from network config (`config/holesky.json`, `config/gnosis.json`). Any schema drift breaks verification.
 * **Compiler version**: must extract from artifact metadata to avoid “bytecode mismatch”.
-* **Flatten snapshots**: Only top-level contracts in `src/`. Nested contracts or libs require explicit inclusion if needed by validator; we document this.
+* **Flatten snapshots**: Only top-level contracts in `src/`. Nested contracts or libs require explicit inclusion if needed by validator.
 * **Gas spikes**: `--slow` and realistic gas price; can add `--with-gas-price` override via env if necessary.
 * **Multiple repos**: Paths and names must be parameterized; we’ll centralize runner snippets where possible.
 
@@ -228,16 +227,16 @@ DeploymentArtifact --> UpgradeSnapshots : produced after validation
 5. **Partial verification**: If some modules verify and others are pending, do we block the run or allow success with warnings?
 6. **Static analysis**: Do we integrate `slither`/`solhint` gates now or later?
 7. **Upgrade validator inputs**: Any proxies/initializers that require special handling in `ValidateUpgrade.s.sol`?
-8. **Proxy pattern:** UUPS vs Transparent Proxy—standardize repo-wide?
-9. **Staging vs production separation:** single proxy with staged impl (not pointed) vs dedicated staging proxy address—what’s our default?
+8. **Proxy pattern:** Use Transparent Proxy for now (UUPS allowed per-repo but must pass the same upgrade-safety checks)?
+9. **Staging vs production separation:** Default to deploying a staging proxy or new impl address on mainnet without wiring it to the production proxy?
 10. **Artifact granularity:** do we store both proxy and implementation entries for every upgrade, with kind?
 
 ---
 
 ## 7. Glossary / References
 
-* **Foundry** — `forge` build/test/verify + `cast` utilities.
-* **Blockscout** — Block explorer API for contract verification (Holesky/Gnosis).
-* **Upgrade-safety validation** — CI step comparing flattened “previous vs current” contracts running `ValidateUpgrade.s.sol`.
-* **Deployment artifacts** — JSON files under `deployments/{network}/deployment.json` with addresses and metadata.
-* **GitHub Environments** — `testnet`, `production` with secrets and (optional) required reviewers.
+* **Foundry** — Ethereum development toolkit providing `forge` (build, test, deploy, verify) and `cast` (RPC and ABI utilities).
+* **Blockscout** — Open-source block explorer and verification API used for both Holesky and Gnosis networks (replaces Etherscan in CI/CD).
+* **Upgrade-safety validation** — CI step that compares flattened previous vs current contract sources and runs `script/upgrades/ValidateUpgrade.s.sol` to detect unsafe storage or proxy changes before deployment.
+* **Deployment artifacts** — Canonical JSON outputs stored under `deployments/{network}/deployment.json`, containing deployed contract addresses, source paths, and metadata consumed by frontends.
+* **GitHub Environments** — Protected configuration contexts (`testnet`, `production`) that store secrets (RPC URLs, private keys) and can require manual approvals for mainnet deployments.
