@@ -57,16 +57,14 @@ To make workflows reusable across repos, CI expects a **canonical wrapper**:
   <lower_snake_case_name>=0x...
   ```
 
+The CI fails the job if any required line/key is missing.
+
 * **Artifact expectation:** CI will build `deployments/<env>/deployment.json` from those outputs using the minimal schema:
 
   ```json
   {
-    "network": "mainnet|testnet",
-    "chainId": 100,
-    "timestamp": "ISO8601",
-    "gitCommit": "<sha>",
     "contracts": [
-      { "sourcePath": "src/Foo.sol:Foo", "address": "0x..." }
+      { "sourcePath": "src/Foo.sol:Foo", "contractName": "Foo", "address": "0x..." }
     ]
   }
   ```
@@ -76,23 +74,32 @@ To make workflows reusable across repos, CI expects a **canonical wrapper**:
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.25;
+
 import "forge-std/Script.sol";
 import "forge-std/console2.sol";
-
-// import specific scripts or call their libraries here
 
 contract Deploy is Script {
   function run() external {
     string memory target = vm.envString("DEPLOY_TARGET"); // e.g., "ButteredBread"
-    vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
+    require(bytes(target).length != 0, "DEPLOY_TARGET required");
+
+    uint256 pk = vm.envUint("PRIVATE_KEY");
+    require(pk != 0, "PRIVATE_KEY required");
+
+    vm.startBroadcast(pk);
 
     if (keccak256(bytes(target)) == keccak256("ButteredBread")) {
-      // call into DeployButteredBread flow or library
-      // emit standard logs:
-      console2.log("PROXY 0x...");         // address of deployed proxy
-      console2.log("IMPLEMENTATION 0x..."); // implementation address
-      console2.log("PROXY_ADMIN 0x...");    // admin address
-      console2.log("BUTTEREDBREAD 0x...");  // main contract address
+      // ... deploy your implementation + proxy here ...
+      address impl = address(0xD00D);   
+      address proxy = address(0xBEEF);  
+      address admin = address(0xA11CE); 
+      address main  = proxy;            
+
+      // EXACT stdout lines for the GitHub parser (no colon):
+      console2.log(string.concat("IMPLEMENTATION ", vm.toString(impl)));
+      console2.log(string.concat("PROXY ",          vm.toString(proxy)));
+      console2.log(string.concat("PROXY_ADMIN ",    vm.toString(admin)));
+      console2.log(string.concat("BUTTEREDBREAD ",  vm.toString(main)));
     } else {
       revert("Unknown DEPLOY_TARGET");
     }
@@ -100,6 +107,7 @@ contract Deploy is Script {
     vm.stopBroadcast();
   }
 }
+
 ```
 
 ---
@@ -170,7 +178,7 @@ contract Deploy is Script {
 1. **CI triggers** on `pull_request` to `main`.
 2. **Checkout** repo with submodules; **Install Foundry**; **forge install**; **forge build**; **forge test -vvv**.
 3. **Upgrade-safety validation** runs (`forge build`; check `test/upgrades/previous`; run `script/upgrades/ValidateUpgrade.s.sol` if present).
-4. **Deploy (upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:DeployScript`) using a proxy pattern (UUPS/Transparent). Create or upgrade a **testnet** proxy but never touch **mainnet** production proxy. Secrets: `TESTNET_PRIVATE_KEY`, `TESTNET_RPC_URL`.
+4. **Deploy (upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) using a proxy pattern (UUPS/Transparent). Create or upgrade a **testnet** proxy but never touch **mainnet** production proxy. Secrets: `TESTNET_PRIVATE_KEY`, `TESTNET_RPC_URL`.
 5. **Parse deployed addresses** from script output into `GITHUB_OUTPUT`.
 6. **Verify** each contract on **Blockscout** (**testnet**) with correct compiler metadata & constructor args; wait for indexing (sleep with backoff).
 7. **Summarize** in `$GITHUB_STEP_SUMMARY` (Markdown table with explorer links).
@@ -184,8 +192,16 @@ contract Deploy is Script {
 
 1. **CI triggers** on `push` to `main`.
 2. Same steps 2–3 as Path A.
-3. **Deploy (non-disruptive & upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:DeployScript`) to **mainnet** with `MAINNET_PRIVATE_KEY`, `MAINNET_RPC_URL`. Deploy a staging proxy+implementation or deploy a new implementation only for upgrade validation. Do not point the production proxy to the new implementation automatically.
+3. **Deploy (non-disruptive & upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) to **mainnet** with `MAINNET_PRIVATE_KEY`, `MAINNET_RPC_URL`. Deploy a staging proxy+implementation or deploy a new implementation only for upgrade validation. Do not point the production proxy to the new implementation automatically.
 4. **Parse outputs**, **verify on Blockscout (mainnet)**, **summarize**, and write `deployments/mainnet/deployment.json` with `address`, `contractName`, `sourcePath` per contract.
+
+#### Upgrade-safety — Required checks (must pass)
+
+* Storage layout is append-only: no slot reorder/overwrite; only new vars appended in the same inheritance order.
+* Initializer gating: implementation contracts have initializers disabled (or guarded); no re-initialization.
+* Proxy semantics: for Transparent, admin vs user calls behave correctly; for UUPS, proxiableUUID() matches and upgradeTo* is restricted.
+* Dry-run upgrade: simulate pointing the proxy to the new impl; run invariants/smoke tests (e.g., read critical state, role ACLs) without owner overrides.
+* Report: on fail, emit which rule failed and a storage diff; block deployment job.
 
 ### 4.2 Alternate / Error Paths
 
@@ -285,39 +301,22 @@ stateDiagram
 ```mermaid
 classDiagram
 class DeploymentArtifact {
-  +network: string
-  +chainId: number
-  +timestamp: ISO8601
-  +deployer: string
-  +gitCommit: string
   +contracts: ContractEntry[]
 }
+
 class ContractEntry {
   +contractName: string
   +sourcePath: string  // e.g. "src/Foo.sol:Foo"
   +address: address
-  +kind: string        // "proxy" | "implementation" | "standalone"
-}
-class UpgradeSnapshots {
-  +previous: /test/upgrades/previous/*.sol
-  +current:  /test/upgrades/current/*.sol
-}
-class ValidatorReport {
-  +status: "pass" | "fail" | "initial-skip"
-  +storageDiff: string
-  +failedInvariant: string
-  +proxyCheck: string  // e.g., "proxiableUUID mismatch"
 }
 
 DeploymentArtifact --> ContractEntry : includes
-DeploymentArtifact --> UpgradeSnapshots : produced after validation
-UpgradeSnapshots --> ValidatorReport : inputs to validator
-ValidatorReport --> DeploymentArtifact : summarized in CI logs/summary
+
 ```
 
 ---
 
-## 5. Edge cases and concessions
+## 6. Edge cases and concessions
 
 * **Blockscout indexing lag**: we add waits/backoff. Verification may be marked as “pending” in summary and retried by re-running workflow.
 * **Constructor args**: pulled via `cast abi-encode` from network config (`config/testnet.json`, `config/mainnet.json`). Any schema drift breaks verification.
@@ -328,7 +327,7 @@ ValidatorReport --> DeploymentArtifact : summarized in CI logs/summary
 
 ---
 
-## 6. Open Questions
+## 7. Open Questions
 
 1. **Environment protections**: Do we require manual approval for `production`? Who are approvers?
 2. **Wallet management**: Custody of `MAINNET_PRIVATE_KEY` & `TESTNET_PRIVATE_KEY` (rotation cadence, funding, policy)?
@@ -343,7 +342,7 @@ ValidatorReport --> DeploymentArtifact : summarized in CI logs/summary
 
 ---
 
-## 7. Glossary / References
+## 8. Glossary / References
 
 * **Foundry** — Ethereum development toolkit providing `forge` (build, test, deploy, verify) and `cast` (RPC and ABI utilities).
 * **Blockscout** — Open-source block explorer and verification API used for contract verification (testnet/mainnet).
