@@ -39,27 +39,7 @@ To make workflows reusable across repos, CI expects a **canonical wrapper**:
     -vvvv
   ```
 
-* **Required stdout lines (for GitHub parser), one per line:**
-
-  ```
-  IMPLEMENTATION 0x...
-  PROXY 0x...
-  PROXY_ADMIN 0x...
-  <CONTRACT_NAME> 0x...
-  ```
-
-* **Required GITHUB_OUTPUT keys:**
-
-  ```
-  implementation=0x...
-  proxy=0x...
-  proxy_admin=0x...
-  <lower_snake_case_name>=0x...
-  ```
-
-The CI fails the job if any required line/key is missing.
-
-* **Artifact expectation:** CI will build `deployments/<env>/deployment.json` from those outputs using the minimal schema:
+**Broadcast artifact contract:** CI will parse the Foundry broadcast artifact to extract deployed addresses.
 
   ```json
   {
@@ -90,16 +70,6 @@ contract Deploy is Script {
 
     if (keccak256(bytes(target)) == keccak256("ButteredBread")) {
       // ... deploy your implementation + proxy here ...
-      address impl = address(0xD00D);   
-      address proxy = address(0xBEEF);  
-      address admin = address(0xA11CE); 
-      address main  = proxy;            
-
-      // EXACT stdout lines for the GitHub parser (no colon):
-      console2.log(string.concat("IMPLEMENTATION ", vm.toString(impl)));
-      console2.log(string.concat("PROXY ",          vm.toString(proxy)));
-      console2.log(string.concat("PROXY_ADMIN ",    vm.toString(admin)));
-      console2.log(string.concat("BUTTEREDBREAD ",  vm.toString(main)));
     } else {
       revert("Unknown DEPLOY_TARGET");
     }
@@ -184,7 +154,7 @@ contract Deploy is Script {
 2. **Checkout** repo with submodules; **Install Foundry**; **forge install**; **forge build**; **forge test -vvv**.
 3. **Upgrade-safety validation** runs (`forge build`; check `test/upgrades/previous`; run `script/upgrades/ValidateUpgrade.s.sol` if present).
 4. **Deploy (upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) using a proxy pattern (UUPS/Transparent). Create or upgrade a **testnet** proxy but never touch **mainnet** production proxy. Secrets: `TESTNET_PRIVATE_KEY`, `TESTNET_RPC_URL`.
-5. **Parse deployed addresses** from script output into `GITHUB_OUTPUT`.
+5. **Parse deployed addresses** from Foundry’s broadcast artifact.
 6. **Verify** each contract on **Blockscout** (**testnet**) with correct compiler metadata & constructor args; wait for indexing (sleep with backoff).
 7. **Summarize** in `$GITHUB_STEP_SUMMARY` (Markdown table with explorer links).
 8. **Save artifacts** to `deployments/testnet/deployment.json` including, for each contract: `sourcePathAndName`, `address`.
@@ -198,7 +168,7 @@ contract Deploy is Script {
 1. **CI triggers** on `push` to `main`.
 2. Same steps 2–3 as Path A.
 3. **Deploy (non-disruptive & upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) to **mainnet** with `MAINNET_PRIVATE_KEY`, `MAINNET_RPC_URL`. Deploy a staging proxy+implementation or deploy a new implementation only for upgrade validation. Do not point the production proxy to the new implementation automatically.
-4. **Parse outputs**, **verify on Blockscout (mainnet)**, **summarize**, and write `deployments/mainnet/deployment.json` with `sourcePathAndName`, `address` per contract.
+4. **Parse broadcast artifact** (`run-latest.json`) for addresses, **verify on Blockscout (mainnet)**, **summarize**, and write `deployments/mainnet/deployment.json` with `{ sourcePathAndName, address }` per contract.
 
 #### Upgrade-safety — Required checks (must pass)
 
@@ -219,7 +189,7 @@ contract Deploy is Script {
 | A5 | Foundry toolchain install error | Build step fails             | Re-run workflow; pin known-good versions                                                          |
 | A6 | Submodule fetch error           | Checkout fails               | Ensure `submodules: recursive`; fallback to `fetch-depth: 0`                                      |
 | A7 | Gas/nonce issues                | Broadcast fails              | Use `--slow` and clean nonce; document funding and nonce hygiene                                  |
-| A8 | Parsing deploy output fails     | Missing addresses in outputs | Fail with a clear message and dump raw `forge script` output for triage.                          |
+| A8 | Parsing broadcast artifact fails| Missing addresses in outputs | Fail with a clear message and attach `broadcast/*/run-latest.json`                                |
 | A9 | Artifact upload fails           | Missing artifacts in run     | Re-upload step; store to workspace before upload                                                  |
 
 ---
