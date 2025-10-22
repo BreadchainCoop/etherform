@@ -17,7 +17,7 @@
   * **Testnet**: deploy on PR to `main`.
   * **Mainnet (configurable)**: deploy on push/merge to `main` under a protected environment.
   * **Upgrade safety validation** via flattened previous/current contracts and `script/upgrades/ValidateUpgrade.s.sol`.
-  * **Flattening** step to persist contract snapshots to `test/upgrades/previous`.
+  * **Flattening** On pushes to dev only (after tests and upgrade-safety pass), CI flattens all top-level contracts in `src/` to `test/upgrades/current/`, then backs up that snapshot to `test/upgrades/previous/` and auto-commits the changes.
 * Direction: **adopt Blockscout verification** and **drop Etherscan** support.
 * Intended to be reused across multiple repos; not for continuous auto-upgrades of production, but to guarantee end-to-end deployability and unblock frontends.
 
@@ -144,6 +144,32 @@ contract Deploy is Script {
 
 ## 4. Step-by-Step Flow
 
+### 4.0 Upgrade-Safety & Snapshot Policy (Authoritative)
+
+**Triggers**
+
+* **Upgrade-safety job runs on**:
+
+  * `workflow_dispatch`
+  * any `push`
+  * `pull_request` where **base** ∈ {`dev`,`main`} **or** `head`/`base` contains `'release'`
+* **Flatten & auto-commit job runs only on**:
+
+  * `push` to `dev` (not PRs, not `main`), **after** tests and upgrade-safety pass
+
+**Upgrade-safety behavior**
+
+1. `forge clean && forge build`
+2. If `test/upgrades/previous/*.sol` exists, run `script/upgrades/ValidateUpgrade.s.sol`.
+   Else → **skip** (initial deployment; no baseline available).
+
+**Snapshot/flatten behavior (dev-only)**
+
+1. Flatten `src/*.sol` to `test/upgrades/current/*.sol`
+2. Replace baseline: delete `test/upgrades/previous/`, copy `current` to `previous`
+3. **Auto-commit** changes under `test/upgrades/**/*.sol` with message
+   `chore: auto-flatten contracts after validation passes [skip ci]`
+
 ### 4.1 Main (“Happy”) Paths
 
 #### Path A — PR to `main` (Testnet)
@@ -191,6 +217,7 @@ contract Deploy is Script {
 | A7 | Gas/nonce issues                | Broadcast fails              | Use `--slow` and clean nonce; document funding and nonce hygiene                                  |
 | A8 | Parsing broadcast artifact fails| Missing addresses in outputs | Fail with a clear message and attach `broadcast/*/run-latest.json`                                |
 | A9 | Artifact upload fails           | Missing artifacts in run     | Re-upload step; store to workspace before upload                                                  |
+| A10 | No `test/upgrades/previous/*.sol` baseline | Validator skipped | Log as “initial deployment”; baseline will be set on next successful `dev` push                  |
 
 ---
 
@@ -219,6 +246,12 @@ sequenceDiagram
     end
   else no snapshots (initial deployment)
     GH-->>GH: skip validator (log message)
+  end
+
+  opt push to dev branch (not PR/main) & checks passed
+    GH->>GH: Flatten top-level src/*.sol -> test/upgrades/current/*.sol
+    GH->>GH: Replace baseline: copy current -> test/upgrades/previous/
+    GH-->>Dev: Auto-commit snapshots [skip ci]
   end
 
   alt PR -> Testnet
@@ -257,6 +290,14 @@ stateDiagram
     ReportOK --> [*]
     InitialSkip --> [*]
     ValidationFailed --> [*]
+  }
+
+  Validating --> Snapshotting : event==push && ref==dev && (pass or initial skip)
+  state Snapshotting {
+    [*] --> FlattenTopLevel
+    FlattenTopLevel --> ReplaceBaseline : current -> previous
+    ReplaceBaseline --> AutoCommit : [skip ci]
+    AutoCommit --> [*]
   }
 
   Validating --> Deploying : pass or initial skip
