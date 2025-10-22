@@ -108,6 +108,7 @@ contract Deploy is Script {
 * Extensive security auditing (we only include upgrade-safety & verification checks here).
 * Changing ProxyAdmin ownership or production proxy state via CI (out of scope).
 * On-chain migrations or data transforms (out of scope).
+* UUPS proxy pattern is out of scope. Only Transparent Proxy is supported.
 
 ### Technical Functionality / Off-Scope Reasoning / Tradeoffs
 
@@ -179,7 +180,7 @@ contract Deploy is Script {
 1. **CI triggers** on `pull_request` to `main`.
 2. **Checkout** repo with submodules; **Install Foundry**; **forge install**; **forge build**; **forge test -vvv**.
 3. **Upgrade-safety validation** runs (`forge build`; check `test/upgrades/previous`; run `script/upgrades/ValidateUpgrade.s.sol` if present).
-4. **Deploy (upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) using a proxy pattern (UUPS/Transparent). Create or upgrade a **testnet** proxy but never touch **mainnet** production proxy. Secrets: `TESTNET_PRIVATE_KEY`, `TESTNET_RPC_URL`.
+4. **Deploy (upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) using a proxy pattern (Transparent). Create or upgrade a **testnet** proxy but never touch **mainnet** production proxy. Secrets: `TESTNET_PRIVATE_KEY`, `TESTNET_RPC_URL`.
 5. **Parse deployed addresses** from Foundry’s broadcast artifact.
 6. **Verify** each contract on **Blockscout** (**testnet**) with correct compiler metadata & constructor args; wait for indexing (sleep with backoff).
 7. **Summarize** in `$GITHUB_STEP_SUMMARY` (Markdown table with explorer links).
@@ -200,7 +201,7 @@ contract Deploy is Script {
 
 * Storage layout is append-only: no slot reorder/overwrite; only new vars appended in the same inheritance order.
 * Initializer gating: implementation contracts have initializers disabled (or guarded); no re-initialization.
-* Proxy semantics: for Transparent, admin vs user calls behave correctly; for UUPS, proxiableUUID() matches and upgradeTo* is restricted.
+* Proxy semantics: admin vs user calls behave correctly.
 * Dry-run upgrade: simulate pointing the proxy to the new impl; run invariants/smoke tests (e.g., read critical state, role ACLs) without owner overrides.
 * Report: on fail, emit which rule failed and a storage diff; block deployment job.
 
@@ -238,7 +239,7 @@ sequenceDiagram
 
   alt previous snapshots present
     GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
-    note right of GH: Validator performs:\n1) Storage layout diff (append-only)\n2) Proxy semantics (Transparent/UUPS)\n3) Dry-run upgrade + invariants\n4) Reporting (diff/invariant)
+    note right of GH: Validator performs:\n1) Storage layout diff (append-only)\n2) Proxy semantics (Transparent)\n3) Dry-run upgrade + invariants\n4) Reporting (diff/invariant)
     alt validation OK
       GH-->>GH: status = pass
     else validation FAIL
@@ -348,9 +349,8 @@ DeploymentArtifact --> ContractEntry : includes
 5. **Partial verification**: If some modules verify and others are pending, do we block the run or allow success with warnings?
 6. **Static analysis**: Do we integrate `slither`/`solhint` gates now or later?
 7. **Upgrade validator inputs**: Any proxies/initializers that require special handling in `ValidateUpgrade.s.sol`?
-8. **Proxy pattern:** Use Transparent Proxy for now (UUPS allowed per-repo but must pass the same upgrade-safety checks)?
-9. **Staging vs production separation:** Default to deploying a staging proxy or new impl address on mainnet without wiring it to the production proxy?
-10. **Artifact granularity:** do we store both proxy and implementation entries for every upgrade, with kind?
+8. **Staging vs production separation:** Default to deploying a staging proxy or new impl address on mainnet without wiring it to the production proxy?
+9. **Artifact granularity:** do we store both proxy and implementation entries for every upgrade, with kind?
 
 ---
 
