@@ -20,6 +20,7 @@
   * **Flattening** On pushes to dev only (after tests and upgrade-safety pass), CI flattens all top-level contracts in `src/` to `test/upgrades/current/`, then backs up that snapshot to `test/upgrades/previous/` and auto-commits the changes.
 * Direction: **adopt Blockscout verification** and **drop Etherscan** support.
 * Intended to be reused across multiple repos; not for continuous auto-upgrades of production, but to guarantee end-to-end deployability and unblock frontends.
+* **Reusable composite GitHub Action:** All CI/CD steps (build/test, upgrade-safety, deploy, verify, summarize, artifacts) are consumed via a single composite action. Workflows become thin wrappers that invoke the action with network-specific inputs.
 
 ### Standardized Deployment Script
 
