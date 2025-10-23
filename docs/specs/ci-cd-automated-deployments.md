@@ -204,10 +204,10 @@ contract Deploy is Script {
 
 #### Upgrade-safety — Required checks (must pass)
 
-* Storage layout is append-only: no slot reorder/overwrite; only new vars appended in the same inheritance order.
+* Storage layout compatibility (no deletions/reorders; only appends and type-safe width changes where allowed), matching OpenZeppelin Upgrades rules.
 * Initializer gating: implementation contracts have initializers disabled (or guarded); no re-initialization.
-* Proxy semantics: admin vs user calls behave correctly.
-* Dry-run upgrade: simulate pointing the proxy to the new impl; run invariants/smoke tests (e.g., read critical state, role ACLs) without owner overrides.
+* Transparent proxy semantics: admin vs. user call paths validated.
+* Dry-run upgrade: simulate upgrading the proxy to the new implementation and run smoke/invariant checks (roles, critical reads).
 * Report: on fail, emit which rule failed and a storage diff; block deployment job.
 
 ### 4.2 Alternate / Error Paths
