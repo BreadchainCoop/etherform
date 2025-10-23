@@ -21,6 +21,7 @@
 * Direction: **adopt Blockscout verification** and **drop Etherscan** support.
 * Intended to be reused across multiple repos; not for continuous auto-upgrades of production, but to guarantee end-to-end deployability and unblock frontends.
 * **Reusable composite GitHub Action:** All CI/CD steps (build/test, upgrade-safety, deploy, verify, summarize, artifacts) are consumed via a single composite action. Workflows become thin wrappers that invoke the action with network-specific inputs.
+* **Per-repo triggers configurable:** Each repo chooses its own triggers (`pull_request`, `push`, `release`, `workflow_dispatch`) and networks via workflow inputs.
 
 ### Standardized Deployment Script
 
@@ -97,6 +98,7 @@ contract Deploy is Script {
 * **Upgrade-safety validation** runs on pushes to dev/main, PRs to/from branches with 'release' or to dev/main, or manual trigger. This is to prevent unsafe upgrades before they hit production.
 * **Repeatability:** workflows are copy/paste-able across repos with minimal variable changes.
 * **Artifact schema:** every deployment emits one JSON containing, per contract:`sourcePathAndName`, `address`.
+* **Secrets & environments (per-repo):** Each repository owns its GitHub Environments and secrets.
 
 ---
 
@@ -188,6 +190,8 @@ contract Deploy is Script {
 8. **Save artifacts** to `deployments/testnet/deployment.json` including, for each contract: `sourcePathAndName`, `address`.
 9. **Comment on PR** with addresses + links.
    **Post-condition:** PR contains validated, verified testnet deployment with artifacts.
+
+**Fail-fast policy:** Any failure in build, tests, upgrade-safety, deploy, verify, or artifact steps fails the workflow and blocks subsequent dependent jobs.
 
 #### Path B — Push/Merge to `main` (Mainnet)
 
