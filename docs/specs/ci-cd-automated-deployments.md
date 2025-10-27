@@ -28,10 +28,6 @@
 To make workflows reusable across repos, CI expects a **canonical wrapper**:
 
 - **Entry point (name):** `script/Deploy.s.sol:Deploy`
-- **Behavior:** Reads the target deploy task from an env var and delegates to contract-specific script(s).
-  - Env: `DEPLOY_TARGET` (e.g., `ButteredBread`, `NFTMultiplier`, etc.)
-  - Env: `RPC_URL`, `PRIVATE_KEY`
-  - Optional Env: `PROXY_ADMIN_ADDRESS`
 - **Invocation (canonical):**
   ```bash
   forge script script/Deploy.s.sol:Deploy \
@@ -46,7 +42,7 @@ To make workflows reusable across repos, CI expects a **canonical wrapper**:
   ```json
   {
     "contracts": [
-      { "sourcePathAndName": "src/Foo.sol:Foo", "address": "0x..." }
+      { "sourcePathAndName": "src/Greeter.sol:Greeter", "address": "0x..." }
     ]
   }
   ```
@@ -60,23 +56,32 @@ pragma solidity ^0.8.25;
 import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+
+import {Greeter} from "src/Greeter.sol";
+
 contract Deploy is Script {
   function run() external {
-    string memory target = vm.envString("DEPLOY_TARGET"); // e.g., "ButteredBread"
-    require(bytes(target).length != 0, "DEPLOY_TARGET required");
+        // Minimal assumption: a PRIVATE_KEY is provided to broadcast
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        require(pk != 0, "PRIVATE_KEY required");
 
-    uint256 pk = vm.envUint("PRIVATE_KEY");
-    require(pk != 0, "PRIVATE_KEY required");
+        vm.startBroadcast(pk);
 
-    vm.startBroadcast(pk);
+        ProxyAdmin admin = new ProxyAdmin();
+        console2.log("ProxyAdmin", address(admin));
 
-    if (keccak256(bytes(target)) == keccak256("ButteredBread")) {
-      // ... deploy your implementation + proxy here ...
-    } else {
-      revert("Unknown DEPLOY_TARGET");
-    }
+        Greeter impl = new Greeter();
+        console2.log("Greeter_Implementation", address(impl));
 
-    vm.stopBroadcast();
+        bytes memory initData = abi.encodeWithSelector(Greeter.initialize.selector, "Hello, world!");
+
+        TransparentUpgradeableProxy proxy =
+            new TransparentUpgradeableProxy(address(impl), address(admin), initData);
+        console2.log("Greeter_Proxy", address(proxy));
+
+        vm.stopBroadcast();
   }
 }
 
