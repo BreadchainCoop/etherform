@@ -306,10 +306,26 @@ stateDiagram-v2
 
 ---
 
-## 8. Glossary / References
+## 7. Glossary / References
 
-* **Foundry** — Ethereum development toolkit providing `forge` (build, test, deploy, verify) and `cast` (RPC and ABI utilities).
-* **Blockscout** — Open-source block explorer and verification API used for contract verification (testnet/mainnet).
-* **Upgrade-safety validation** — CI step that compares flattened previous vs current contract sources and runs `script/upgrades/ValidateUpgrade.s.sol` to detect unsafe storage or proxy changes before deployment.
-* **Deployment artifacts** — Canonical JSON outputs stored under `deployments/{network}/deployment.json`, containing deployed contract addresses, source paths, and metadata consumed by frontends.
-* **GitHub Environments** — Protected configuration contexts (`testnet`, `production`) that store secrets (RPC URLs, private keys) and can require manual approvals for mainnet deployments.
+* **Foundry** — Ethereum toolkit: `forge` (build/test/deploy/verify) and `cast` (RPC/ABI).
+  Docs: [Foundry Book – Deploying](https://getfoundry.sh/forge/deploying).
+
+* **OpenZeppelin (OZ)**
+
+  * Libraries: [OpenZeppelin Contracts](https://github.com/OpenZeppelin/openzeppelin-contracts) (see TransparentUpgradeableProxy & ProxyAdmin).
+  * Foundry upgrades plugin: [@openzeppelin/foundry-upgrades](https://github.com/OpenZeppelin/openzeppelin-foundry-upgrades) (we inherit its checks).
+
+* **Blockscout** — Open-source explorer & verification API used for testnet/mainnet verification.
+  Repo: [blockscout/blockscout](https://github.com/blockscout/blockscout)
+
+* **Upgrade-safety validation** — We inherit checks from OZ Foundry Upgrades.
+  Example in our org: Breadchain workflow reference (validator step):
+  [https://github.com/BreadchainCoop/breadchain/blob/fa7dfc15fd8cc2424d28ce8c659c53551ade6174/.github/workflows/test.yml#L50](https://github.com/BreadchainCoop/breadchain/blob/fa7dfc15fd8cc2424d28ce8c659c53551ade6174/.github/workflows/test.yml#L50)
+
+* **Reference CI templates** — Real-world workflows that (a) deploy to testnet on PR, (b) mainnet on merge to `main`, and (c) verify contracts:
+  [https://github.com/communetxyz/commune-os-sc/tree/main/.github/workflows](https://github.com/communetxyz/commune-os-sc/tree/main/.github/workflows)
+
+* **Deployment artifacts** — Canonical JSON stored under `deployments/{network}/deployment.json` with per-contract metadata used by frontends.
+
+* **GitHub Environments** — Protected contexts (`testnet`, `production`) holding secrets (RPC URLs, private keys) and optional manual approvals.
