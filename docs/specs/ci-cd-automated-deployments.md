@@ -126,13 +126,12 @@ contract Deploy is Script {
 | Automated prod rollback      | Requires on-chain state awareness and migration tooling | Manual rollback plan only (documented below)           |
 | Canary/mainnet shadow deploy | Adds cost & complexity                                  | Keep pipeline lean; rely on testnet for pre-prod       |
 | Multi-network matrix         | Increases flakiness and runtime                         | Start with two networks, expand later                  |
-| Etherscan verification       | Direction is Blockscout standardization                 | One verifier reduces variance; Etherscan features lost |
+| Etherscan verification       | Etherscan/Etherscan based explorers are inconsistent and require API keys | No API key needed and all EVM chains supported through one API that's open source and self hostable |
 
 ### Value Proposition
 
 | Technical Functionality      | Value                                   | Tradeoffs                                    |
 | ---------------------------- | --------------------------------------- | -------------------------------------------- |
-| Foundry build/test on CI     | Early failure detection                 | Longer CI runtime                            |
 | Upgrade-safety validation    | Prevents breaking upgrades              | Requires keeping flattened snapshots current |
 | Auto-deploy on PR (testnet)  | Frontend unblock, end-to-end validation | Funds & RPC cost on testnet                  |
 | Auto-deploy on main (configurable) | Consistent prod releases                | Needs strong environment protection & keys   |
@@ -170,12 +169,20 @@ contract Deploy is Script {
 **Upgrade-safety behavior**
 
 1. `forge clean && forge build`
-2. If `test/upgrades/previous/*.sol` exists, run `script/upgrades/ValidateUpgrade.s.sol`.
-   Else → **skip** (initial deployment; no baseline available).
+2. Build current snapshot (flatten top-level `src/*.sol`) into `upgrades/snapshots/current/*.sol`
+3. If `upgrades/snapshots/baseline/*.sol` exists, run `script/upgrades/ValidateUpgrade.s.sol`.
+   Else → mark Baseline Missing and follow the init policy below.
+
+On push to `dev` (after build/tests pass), if baseline is missing:
+
+* Copy `upgrades/snapshots/current/*` → `upgrades/snapshots/baseline/*`
+* Auto-commit: `chore: init upgrade baseline [skip ci]`
+* On PRs when baseline is missing: don’t fail; swarning in the Step Summary (“Baseline missing — will auto-init on first merge to dev”).
+
 
 **Snapshot/flatten behavior (dev-only)**
 
-1. Flatten `src/*.sol` to `test/upgrades/current/*.sol`
+1. Flatten `src/*.sol` to `upgrades/snapshots/current/*.sol`
 2. Replace baseline: delete `test/upgrades/previous/`, copy `current` to `previous`
 3. **Auto-commit** changes under `test/upgrades/**/*.sol` with message
    `chore: auto-flatten contracts after validation passes [skip ci]`
@@ -229,7 +236,7 @@ contract Deploy is Script {
 | A7 | Gas/nonce issues                | Broadcast fails              | Use `--slow` and clean nonce; document funding and nonce hygiene                                  |
 | A8 | Parsing broadcast artifact fails| Missing addresses in outputs | Fail with a clear message and attach `broadcast/*/run-latest.json`                                |
 | A9 | Artifact upload fails           | Missing artifacts in run     | Re-upload step; store to workspace before upload                                                  |
-| A10 | No `test/upgrades/previous/*.sol` baseline | Validator skipped | Log as “initial deployment”; baseline will be set on next successful `dev` push                  |
+| A10 | No `upgrades/snapshots/baseline/*.sol` baseline | Validator skipped | Log as “initial deployment”; baseline will be set on next successful `dev` push                  |
 
 ---
 
@@ -261,7 +268,7 @@ sequenceDiagram
   end
 
   opt push to dev branch (not PR/main) & checks passed
-    GH->>GH: Flatten top-level src/*.sol -> test/upgrades/current/*.sol
+    GH->>GH: Flatten top-level src/*.sol -> upgrades/snapshots/current/*.sol
     GH->>GH: Replace baseline: copy current -> test/upgrades/previous/
     GH-->>Dev: Auto-commit snapshots [skip ci]
   end
@@ -287,7 +294,7 @@ stateDiagram
 
   state Validating {
     [*] --> SnapshotCheck
-    SnapshotCheck --> InitialSkip : no test/upgrades/previous/*.sol
+    SnapshotCheck --> InitialSkip : no upgrades/snapshots/baseline/*.sol
     SnapshotCheck --> StorageDiff : previous present
 
     StorageDiff --> ProxyChecks : diff OK
