@@ -17,7 +17,7 @@
   * **Testnet**: deploy on PR to `main`.
   * **Mainnet (configurable)**: deploy on push/merge to `main` under a protected environment.
   * **Upgrade safety validation** via flattened previous/current contracts and `script/upgrades/ValidateUpgrade.s.sol`.
-  * **Flattening** On pushes to dev only (after tests and upgrade-safety pass), CI flattens all top-level contracts in `src/` to `test/upgrades/current/`, then backs up that snapshot to `test/upgrades/previous/` and auto-commits the changes.
+  * **Flattening** On pushes to dev only (after tests and upgrade-safety pass), CI flattens all contracts listed in `broadcast/**/run-latest.json` to `upgrades/snapshots/current/`, then backs up that snapshot to `upgrades/snapshots/previous/` and auto-commits the changes.
 * Direction: **adopt Blockscout verification** and **drop Etherscan** support.
 * Intended to be reused across multiple repos; not for continuous auto-upgrades of production, but to guarantee end-to-end deployability and unblock frontends.
 * **Reusable composite GitHub Action:** All CI/CD steps (build/test, upgrade-safety, deploy, verify, summarize, artifacts) are consumed via a single composite action. Workflows become thin wrappers that invoke the action with network-specific inputs.
@@ -169,7 +169,7 @@ contract Deploy is Script {
 **Upgrade-safety behavior**
 
 1. `forge clean && forge build`
-2. Build current snapshot (flatten top-level `src/*.sol`) into `upgrades/snapshots/current/*.sol`
+2. Build current snapshot (contracts from `run-latest.json`) into `upgrades/snapshots/current/*.sol`
 3. If `upgrades/snapshots/baseline/*.sol` exists, run `script/upgrades/ValidateUpgrade.s.sol`.
    Else → mark Baseline Missing and follow the init policy below.
 
@@ -177,14 +177,14 @@ On push to `dev` (after build/tests pass), if baseline is missing:
 
 * Copy `upgrades/snapshots/current/*` → `upgrades/snapshots/baseline/*`
 * Auto-commit: `chore: init upgrade baseline [skip ci]`
-* On PRs when baseline is missing: don’t fail; swarning in the Step Summary (“Baseline missing — will auto-init on first merge to dev”).
+* On PRs when baseline is missing: don't fail; warning in the Step Summary ("Baseline missing — will auto-init on first merge to dev").
 
 
 **Snapshot/flatten behavior (dev-only)**
 
-1. Flatten `src/*.sol` to `upgrades/snapshots/current/*.sol`
-2. Replace baseline: delete `test/upgrades/previous/`, copy `current` to `previous`
-3. **Auto-commit** changes under `test/upgrades/**/*.sol` with message
+1. Flatten -> `upgrades/snapshots/current/*.sol` (contracts from `run-latest.json`)
+2. Replace baseline: delete `upgrades/snapshots/previous/`, copy `current` to `previous`
+3. **Auto-commit** changes under `upgrades/snapshots/**/*.sol` with message
    `chore: auto-flatten contracts after validation passes [skip ci]`
 
 ### 4.1 Main (“Happy”) Paths
@@ -194,8 +194,8 @@ On push to `dev` (after build/tests pass), if baseline is missing:
 **Pre-condition:** PR opened or updated targeting `main`; secrets configured; deploy wallet funded on the selected **testnet**.
 
 1. **CI triggers** on `pull_request` to `main`.
-2. **Checkout** repo with submodules; **Install Foundry**; **forge install**; **forge build**; **forge test -vvv**.
-3. **Upgrade-safety validation** runs (`forge build`; check `test/upgrades/previous`; run `script/upgrades/ValidateUpgrade.s.sol` if present).
+2. **Checkout repo**; install Foundry; forge install; build; test
+3. **Upgrade-safety validation** runs (`forge build`; check `upgrades/snapshots/previous`; run `script/upgrades/ValidateUpgrade.s.sol` if present).
 4. **Deploy (upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) using a proxy pattern (Transparent). Create or upgrade a **testnet** proxy but never touch **mainnet** production proxy. Secrets: `TESTNET_PRIVATE_KEY`, `TESTNET_RPC_URL`.
 5. **Parse deployed addresses** from Foundry’s broadcast artifact.
 6. **Verify** each contract on **Blockscout** (**testnet**) with correct compiler metadata & constructor args; wait for indexing (sleep with backoff).
