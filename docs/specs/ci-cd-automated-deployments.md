@@ -301,23 +301,8 @@ stateDiagram-v2
 * **Blockscout indexing lag**: we add waits/backoff. Verification may be marked as “pending” in summary and retried by re-running workflow.
 * **Constructor args**: derived from Foundry broadcast artifacts. CI reads `broadcast/**/run-latest.json`, takes each deployment tx input, loads the contract's creation bytecode from `out/**/<Contract>.json`, and computes `constructorArgsHex = input[len(creationBytecode):]`.
 * CI compiles with `bytecode_hash = "none"` and `cbor_metadata = false` to avoid metadata-hash drift. If the artifact bytecode is not a prefix of input, the job fails with a metadata-mismatch hint.
-* **Flatten snapshots**: Only top-level contracts in `src/`. Nested contracts or libs require explicit inclusion if needed by validator.
-* **Gas spikes**: `--slow` and realistic gas price; can add `--with-gas-price` override via env if necessary.
-* **Multiple repos**: Paths and names must be parameterized; we’ll centralize runner snippets where possible.
-
----
-
-## 7. Open Questions
-
-1. **Environment protections**: Do we require manual approval for `production`? Who are approvers?
-2. **Wallet management**: Custody of `MAINNET_PRIVATE_KEY` & `TESTNET_PRIVATE_KEY` (rotation cadence, funding, policy)?
-3. **RPC providers**: Which providers (rate limits/SLA)? Fallback RPC?
-4. **Artifact schema**: Do frontends need ABI pointers/hashes in `deployment.json`? Add `abiPaths`?
-5. **Partial verification**: If some modules verify and others are pending, do we block the run or allow success with warnings?
-6. **Static analysis**: Do we integrate `slither`/`solhint` gates now or later?
-7. **Upgrade validator inputs**: Any proxies/initializers that require special handling in `ValidateUpgrade.s.sol`?
-8. **Staging vs production separation:** Default to deploying a staging proxy or new impl address on mainnet without wiring it to the production proxy?
-9. **Artifact granularity:** do we store both proxy and implementation entries for every upgrade, with kind?
+* **Flatten snapshots**: derive the set of contracts from Foundry’s broadcast artifact (`broadcast/**/run-latest.json`).
+* **Gas handling**: rely on provider-estimated gas and use `--slow` to avoid nonce/rate issues. No manual gas-price override in MVP.
 
 ---
 
