@@ -114,6 +114,7 @@ contract Deploy is Script {
 * Automatic continuous upgrades of production on every commit (we deploy on `main` merges, not continuously).
 * Updating the production proxy implementation automatically on every merge. Production upgrades remain manual/explicit.
 * Extensive security auditing (we only include upgrade-safety & verification checks here).
+* Custom proxy logic or upgrade frameworks — we rely directly on **OpenZeppelin (OZ) libraries** for ProxyAdmin and TransparentUpgradeableProxy patterns.
 * Changing ProxyAdmin ownership or production proxy state via CI (out of scope).
 * On-chain migrations or data transforms (out of scope).
 * UUPS proxy pattern is out of scope. Only Transparent Proxy is supported.
