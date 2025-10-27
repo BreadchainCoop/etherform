@@ -217,11 +217,9 @@ On push to `dev` (after build/tests pass), if baseline is missing:
 
 #### Upgrade-safety — Required checks (must pass)
 
-* Storage layout compatibility (no deletions/reorders; only appends and type-safe width changes where allowed), matching OpenZeppelin Upgrades rules.
-* Initializer gating: implementation contracts have initializers disabled (or guarded); no re-initialization.
-* Transparent proxy semantics: admin vs. user call paths validated.
-* Dry-run upgrade: simulate upgrading the proxy to the new implementation and run smoke/invariant checks (roles, critical reads).
-* Report: on fail, emit which rule failed and a storage diff; block deployment job.
+All upgrade-safety validations are inherited directly from the **OpenZeppelin Upgrades Foundry plugin**  
+(`@openzeppelin/foundry-upgrades`). The CI simply runs these checks to ensure storage layout compatibility,
+initializer safety, and transparent proxy semantics before deployment.
 
 ### 4.2 Alternate / Error Paths
 
@@ -232,11 +230,9 @@ On push to `dev` (after build/tests pass), if baseline is missing:
 | A3 | Blockscout indexing slow        | Verify timeouts              | Bounded backoff (e.g., 3 attempts). If still pending, mark “Verification pending” in summary and succeed the job. |
 | A4 | Upgrade-safety fails            | Block deploy jobs            | Mark PR red; link to diff and validator logs                                                      |
 | A5 | Foundry toolchain install error | Build step fails             | Re-run workflow; pin known-good versions                                                          |
-| A6 | Submodule fetch error           | Checkout fails               | Ensure `submodules: recursive`; fallback to `fetch-depth: 0`                                      |
-| A7 | Gas/nonce issues                | Broadcast fails              | Use `--slow` and clean nonce; document funding and nonce hygiene                                  |
-| A8 | Parsing broadcast artifact fails| Missing addresses in outputs | Fail with a clear message and attach `broadcast/*/run-latest.json`                                |
-| A9 | Artifact upload fails           | Missing artifacts in run     | Re-upload step; store to workspace before upload                                                  |
-| A10 | No `upgrades/snapshots/baseline/*.sol` baseline | Validator skipped | Log as “initial deployment”; baseline will be set on next successful `dev` push                  |
+| A6 | Parsing broadcast artifact fails| Missing addresses in outputs | Fail with a clear message and attach `broadcast/*/run-latest.json`                                |
+| A7 | Artifact upload fails           | Missing artifacts in run     | Re-upload step; store to workspace before upload                                                  |
+| A8 | No `upgrades/snapshots/baseline/*.sol` baseline | Validator skipped | Log as “initial deployment”; baseline will be set on next successful `dev` push                  |
 
 ---
 
@@ -245,104 +241,56 @@ On push to `dev` (after build/tests pass), if baseline is missing:
 ```mermaid
 sequenceDiagram
   autonumber
-  participant Dev as Developer
-  participant GH as GitHub Actions
+  participant Dev
+  participant CI as GitHub Actions
   participant RPC as RPC (testnet/mainnet)
-  participant BS as Blockscout API
+  participant BS as Blockscout
   participant ART as Artifact Store
 
-  Dev->>GH: Open PR to main / Push to main
-  GH->>GH: Checkout, Install Foundry, Build, Test
-  GH->>GH: Upgrade Safety Validation (build + check snapshots)
+  Dev->>CI: PR to main / Push to main
+  CI->>CI: Checkout, Install Foundry, Build, Test
+  CI->>CI: Upgrade-safety validate (OZ Foundry Upgrades — inherited checks)
 
-  alt previous snapshots present
-    GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
-    note right of GH: Validator performs:\n1) Storage layout diff (append-only)\n2) Proxy semantics (Transparent)\n3) Dry-run upgrade + invariants\n4) Reporting (diff/invariant)
-    alt validation OK
-      GH-->>GH: status = pass
-    else validation FAIL
-      GH-->>GH: status = fail (block deployment)
-    end
-  else no snapshots (initial deployment)
-    GH-->>GH: skip validator (log message)
+  alt PR to main (testnet)
+    CI->>RPC: forge script --broadcast (testnet)
+  else Push to main (mainnet)
+    CI->>RPC: forge script --broadcast (impl-only, mainnet)
   end
 
-  opt push to dev branch (not PR/main) & checks passed
-    GH->>GH: Flatten top-level src/*.sol -> upgrades/snapshots/current/*.sol
-    GH->>GH: Replace baseline: copy current -> test/upgrades/previous/
-    GH-->>Dev: Auto-commit snapshots [skip ci]
-  end
-
-  alt PR -> Testnet
-    GH->>RPC: forge script --broadcast (Testnet)
-  else Push -> Mainnet
-    GH->>RPC: forge script --broadcast (Mainnet)
-  end
-
-  RPC-->>GH: Tx receipts + contract addresses
-  GH->>BS: verify-contract (per module)
-  BS-->>GH: Verification OK / pending
-  GH->>ART: Upload deployment.json
-  GH-->>Dev: PR Comment / Step Summary with links
+  RPC-->>CI: Tx receipts + addresses
+  CI->>BS: Verify contracts
+  BS-->>CI: OK / pending
+  CI->>ART: Write deployments/{network}/deployment.json
+  CI-->>Dev: Step Summary + PR comment
 ```
 
 ```mermaid
-stateDiagram
-  [*] --> Pending
-  Pending --> Building : checkout/install/build/test
-  Building --> Validating : upgrade-safety
-
-  state Validating {
-    [*] --> SnapshotCheck
-    SnapshotCheck --> InitialSkip : no upgrades/snapshots/baseline/*.sol
-    SnapshotCheck --> StorageDiff : previous present
-
-    StorageDiff --> ProxyChecks : diff OK
-    StorageDiff --> ValidationFailed : diff error
-
-    ProxyChecks --> DryRun : semantics OK
-    ProxyChecks --> ValidationFailed : proxy error
-
-    DryRun --> ReportOK : invariants OK
-    DryRun --> ValidationFailed : invariant/ACL error
-
-    ReportOK --> [*]
-    InitialSkip --> [*]
-    ValidationFailed --> [*]
-  }
-
-  Validating --> Snapshotting : event==push && ref==dev && (pass or initial skip)
-  state Snapshotting {
-    [*] --> FlattenTopLevel
-    FlattenTopLevel --> ReplaceBaseline : current -> previous
-    ReplaceBaseline --> AutoCommit : [skip ci]
-    AutoCommit --> [*]
-  }
-
-  Validating --> Deploying : pass or initial skip
-  Validating --> Failed : validation error
-
-  Deploying --> Verifying : addresses parsed
-  Deploying --> Failed : broadcast error
-
-  Verifying --> Publishing : verification OK/partial
-  Verifying --> Publishing : continue-on-error (flagged)
-
-  Publishing --> Succeeded
-  Failed --> [*]
-  Succeeded --> [*]
+stateDiagram-v2
+  [*] --> Build
+  Build --> Validate
+  Validate --> Skip : no upgrades/snapshots/baseline/*.sol
+  Validate --> Pass : OZ checks pass
+  Validate --> Fail : OZ checks fail
+  Skip --> [*]
+  Pass --> [*]
+  Fail --> [*]
 ```
 
 ```mermaid
-classDiagram
-class DeploymentArtifact {
-  +contracts: ContractEntry[]
-}
-class ContractEntry {
-  +sourcePathAndName: string  // e.g. "src/Foo.sol:Foo"
-  +address: address
-}
-DeploymentArtifact --> ContractEntry : includes
+stateDiagram-v2
+  [*] --> Flatten
+  Flatten: Flatten src/*.sol -> upgrades/snapshots/current/
+  Flatten --> Promote : baseline exists
+  Flatten --> InitBaseline : baseline missing
+
+  Promote: copy baseline -> previous
+  Promote --> ReplaceBaseline: copy current -> baseline
+  ReplaceBaseline --> Commit: chore: auto-flatten contracts after validation passes [skip ci]
+  Commit --> [*]
+
+  InitBaseline: copy current -> baseline
+  InitBaseline --> CommitInit: chore: init upgrade baseline [skip ci]
+  CommitInit --> [*]
 ```
 
 ---
