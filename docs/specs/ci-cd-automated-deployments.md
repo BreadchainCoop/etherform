@@ -100,8 +100,8 @@ contract Deploy is Script {
 
 * **On every PR to `main`:** build, test, upgrade-safety validate, deploy to **testnet**, verify on **Blockscout**, publish addresses + explorer links in **PR comment** and **Step Summary**, and upload **deployment artifacts**.
 * **On merge/push to `main`:** run the same pipeline against **mainnet (configurable)** under a protected environment. The job must not change the production proxy’s implementation. It deploys a new implementation only. All production upgrades remain manual and explicit.
-* **Upgrade-safety validation** runs on pushes to dev/main, PRs to/from branches with 'release' or to dev/main, or manual trigger. This is to prevent unsafe upgrades before they hit production.
-* **Repeatability:** workflows are copy/paste-able across repos with minimal variable changes.
+* **Upgrade-safety validation** runs on every pull request. Snapshot formatting & tracking (flatten → baseline) happens only after a merge into `dev`.
+* **Repeatability & Reusability:** all CI/CD steps are packaged into a reusable composite GitHub Action. Repos only need thin YAML wrappers that call this action with network/environment inputs.
 * **Artifact schema:** every deployment emits one JSON containing, per contract:`sourcePathAndName`, `address`.
 * **Secrets & environments (per-repo):** Each repository owns its GitHub Environments and secrets.
 
