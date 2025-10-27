@@ -233,6 +233,7 @@ initializer safety, and transparent proxy semantics before deployment.
 | A6 | Parsing broadcast artifact fails| Missing addresses in outputs | Fail with a clear message and attach `broadcast/*/run-latest.json`                                |
 | A7 | Artifact upload fails           | Missing artifacts in run     | Re-upload step; store to workspace before upload                                                  |
 | A8 | No `upgrades/snapshots/baseline/*.sol` baseline | Validator skipped | Log as “initial deployment”; baseline will be set on next successful `dev` push                  |
+| A9 | Creation bytecode prefix mismatch | Constructor-arg extraction fails | Ensure CI uses `bytecode_hash="none"` and `cbor_metadata=false`; recompile and retry |
 
 ---
 
@@ -298,8 +299,8 @@ stateDiagram-v2
 ## 6. Edge cases and concessions
 
 * **Blockscout indexing lag**: we add waits/backoff. Verification may be marked as “pending” in summary and retried by re-running workflow.
-* **Constructor args**: pulled via `cast abi-encode` from network config (`config/testnet.json`, `config/mainnet.json`). Any schema drift breaks verification.
-* **Compiler version**: must extract from artifact metadata to avoid “bytecode mismatch”.
+* **Constructor args**: derived from Foundry broadcast artifacts. CI reads `broadcast/**/run-latest.json`, takes each deployment tx input, loads the contract's creation bytecode from `out/**/<Contract>.json`, and computes `constructorArgsHex = input[len(creationBytecode):]`.
+* CI compiles with `bytecode_hash = "none"` and `cbor_metadata = false` to avoid metadata-hash drift. If the artifact bytecode is not a prefix of input, the job fails with a metadata-mismatch hint.
 * **Flatten snapshots**: Only top-level contracts in `src/`. Nested contracts or libs require explicit inclusion if needed by validator.
 * **Gas spikes**: `--slow` and realistic gas price; can add `--with-gas-price` override via env if necessary.
 * **Multiple repos**: Paths and names must be parameterized; we’ll centralize runner snippets where possible.
