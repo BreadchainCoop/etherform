@@ -99,7 +99,7 @@ contract Deploy is Script {
 ### Goals & Success Stories
 
 * **On every PR to `main`:** build, test, upgrade-safety validate, deploy to **testnet**, verify on **Blockscout**, publish addresses + explorer links in **PR comment** and **Step Summary**, and upload **deployment artifacts**.
-* **On merge/push to `main`:** run the same pipeline against **mainnet (configurable)** under a protected environment. The job must not change the production proxy’s implementation. It may deploy a new implementation or a separate staging proxy for validation. All production upgrades remain manual and explicit.
+* **On merge/push to `main`:** run the same pipeline against **mainnet (configurable)** under a protected environment. The job must not change the production proxy’s implementation. It deploys a new implementation only. All production upgrades remain manual and explicit.
 * **Upgrade-safety validation** runs on pushes to dev/main, PRs to/from branches with 'release' or to dev/main, or manual trigger. This is to prevent unsafe upgrades before they hit production.
 * **Repeatability:** workflows are copy/paste-able across repos with minimal variable changes.
 * **Artifact schema:** every deployment emits one JSON containing, per contract:`sourcePathAndName`, `address`.
@@ -204,7 +204,7 @@ contract Deploy is Script {
 
 1. **CI triggers** on `push` to `main`.
 2. Same steps 2–3 as Path A.
-3. **Deploy (non-disruptive & upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) to **mainnet** with `MAINNET_PRIVATE_KEY`, `MAINNET_RPC_URL`. Deploy a staging proxy+implementation or deploy a new implementation only for upgrade validation. Do not point the production proxy to the new implementation automatically.
+3. **Deploy (implementation-only)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) to deploy a new implementation contract on mainnet. Do not deploy/upgrade any proxy and do not modify ProxyAdmin. Output the implementation address only.
 4. **Parse broadcast artifact** (`run-latest.json`) for addresses, **verify on Blockscout (mainnet)**, **summarize**, and write `deployments/mainnet/deployment.json` with `{ sourcePathAndName, address }` per contract.
 
 #### Upgrade-safety — Required checks (must pass)
