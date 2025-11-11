@@ -243,55 +243,83 @@ initializer safety, and transparent proxy semantics before deployment.
 ```mermaid
 sequenceDiagram
   autonumber
-  participant Dev
-  participant CI as GitHub Actions
+  participant Dev as Developer
+  participant GH as GitHub Actions
   participant RPC as RPC (testnet/mainnet)
-  participant BS as Blockscout
+  participant BS as Blockscout API
   participant ART as Artifact Store
 
-  Dev->>CI: PR to main / Push to main
-  CI->>CI: Checkout, Install Foundry, Build, Test
-  CI->>CI: Upgrade-safety validate (OZ Foundry Upgrades — inherited checks)
-
-  alt PR to main (testnet)
-    CI->>RPC: forge script --broadcast (testnet)
-  else Push to main (mainnet)
-    CI->>RPC: forge script --broadcast (impl-only, mainnet)
+  Dev->>GH: Open PR to main / Push to main / Push to dev
+  GH->>GH: Checkout, Install Foundry, Build, Test
+  GH->>GH: Upgrade Safety Validation (build + check snapshots)
+  alt previous snapshots present
+    GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
+    note right of GH: Validator performs:\n1) Storage layout diff (append-only)\n2) Proxy semantics (Transparent)\n3) Dry-run upgrade + invariants\n4) Reporting
+    alt validation OK
+      GH-->>GH: status = pass
+    else validation FAIL
+      GH-->>GH: status = fail (block deployment)
+    end
+  else no snapshots (initial deployment)
+    GH-->>GH: skip validator (log message)
   end
 
-  RPC-->>CI: Tx receipts + addresses
-  CI->>BS: Verify contracts
-  BS-->>CI: OK / pending
-  CI->>ART: Write deployments/{network}/deployment.json
-  CI-->>Dev: Step Summary + PR comment
+  opt Push to dev (not PR/main) & checks passed
+    GH->>GH: Parse broadcast/**/run-latest.json (authoritative contract list)
+    GH->>GH: Flatten listed contracts -> upgrades/snapshots/current/*.sol
+    GH->>GH: Promote snapshots: copy baseline -> previous; copy current -> baseline
+    GH-->>Dev: Auto-commit snapshots [skip ci]
+  end
+
+  alt PR -> Testnet
+    note over GH: Current behavior: re-deploy fresh ProxyAdmin + Impl + Proxy
+    GH->>RPC: forge script --broadcast (Testnet)
+  else Push -> Mainnet
+    note over GH: Implementation-only (no proxy/ProxyAdmin changes)
+    GH->>RPC: forge script --broadcast (Mainnet impl-only)
+  end
+
+  GH->>GH: Parse broadcast/**/run-latest.json → {sourcePathAndName, address}
+  GH->>BS: verify-contract (per module) with constructor args
+  BS-->>GH: Verification OK / pending (bounded backoff)
+  GH->>ART: Write deployments/{network}/deployment.json
+  GH-->>Dev: PR Comment / Step Summary with explorer links
 ```
 
 ```mermaid
 stateDiagram-v2
   [*] --> Build
   Build --> Validate
-  Validate --> Skip : no upgrades/snapshots/baseline/*.sol
+  Validate --> Skip : baseline missing (no upgrades/snapshots/baseline/*.sol)
   Validate --> Pass : OZ checks pass
   Validate --> Fail : OZ checks fail
-  Skip --> [*]
-  Pass --> [*]
+
+  Skip --> Deploy : PR to main OR Push to main
+  Pass --> Deploy : PR to main OR Push to main
   Fail --> [*]
+
+  Skip --> Flatten : Push to dev
+  Pass --> Flatten : Push to dev
+
+  Deploy --> [*]
+  Flatten --> [*]
 ```
 
 ```mermaid
 stateDiagram-v2
   [*] --> Flatten
-  Flatten: Flatten src/*.sol -> upgrades/snapshots/current/
+  Flatten: Read broadcast/**/run-latest.json\nDerive contract list\nFlatten -> upgrades/snapshots/current/*.sol
   Flatten --> Promote : baseline exists
   Flatten --> InitBaseline : baseline missing
 
-  Promote: copy baseline -> previous
-  Promote --> ReplaceBaseline: copy current -> baseline
-  ReplaceBaseline --> Commit: chore: auto-flatten contracts after validation passes [skip ci]
-  Commit --> [*]
+  Promote: prepare baseline replacement
+  Promote --> CopyPrev : copy baseline -> previous
+  CopyPrev --> ReplaceBaseline : copy current -> baseline
+  ReplaceBaseline --> CommitUpdate : chore: auto-flatten after validation [skip ci]
+  CommitUpdate --> [*]
 
-  InitBaseline: copy current -> baseline
-  InitBaseline --> CommitInit: chore: init upgrade baseline [skip ci]
+  InitBaseline: init baseline from current
+  InitBaseline --> CommitInit : chore: init upgrade baseline [skip ci]
   CommitInit --> [*]
 ```
 
