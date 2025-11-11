@@ -273,8 +273,9 @@ sequenceDiagram
 
   opt Push to dev (not PR/main) & checks passed
     GH->>GH: Parse broadcast/**/run-latest.json (authoritative contract list)
-    GH->>GH: Flatten listed contracts -> upgrades/snapshots/current/*.sol
-    GH->>GH: Promote snapshots: copy baseline -> previous; copy current -> baseline
+    GH->>GH: Flatten listed contracts to upgrades/snapshots/current/*.sol
+    GH->>GH: Copy baseline to previous
+    GH->>GH: Copy current to baseline
     GH-->>Dev: Auto-commit snapshots [skip ci]
   end
 
@@ -286,6 +287,7 @@ sequenceDiagram
     GH->>RPC: forge script --broadcast (Mainnet impl-only)
   end
 
+  RPC-->>GH: Tx receipts + contract addresses
   GH->>GH: Parse broadcast/**/run-latest.json → {sourcePathAndName, address}
   GH->>BS: verify-contract (per module) with constructor args
   BS-->>GH: Verification OK / pending (bounded backoff)
@@ -315,18 +317,20 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
   [*] --> Flatten
-  Flatten: Read broadcast/**/run-latest.json\nDerive contract list\nFlatten -> upgrades/snapshots/current/*.sol
+  Flatten: Read broadcast/**/run-latest.json\nDerive contract list\nFlatten to upgrades/snapshots/current/*.sol
   Flatten --> Promote : baseline exists
   Flatten --> InitBaseline : baseline missing
 
   Promote: prepare baseline replacement
-  Promote --> CopyPrev : copy baseline -> previous
-  CopyPrev --> ReplaceBaseline : copy current -> baseline
-  ReplaceBaseline --> CommitUpdate : chore: auto-flatten after validation [skip ci]
+  Promote --> CopyPrev : copy baseline to previous
+  CopyPrev --> ReplaceBaseline : copy current to baseline
+  ReplaceBaseline --> CommitUpdate
+  CommitUpdate: auto-flatten after validation (skip ci)
   CommitUpdate --> [*]
 
   InitBaseline: init baseline from current
-  InitBaseline --> CommitInit : chore: init upgrade baseline [skip ci]
+  InitBaseline --> CommitInit
+  CommitInit: init upgrade baseline (skip ci)
   CommitInit --> [*]
 ```
 
