@@ -17,7 +17,7 @@
   * **Testnet**: deploy on PR to `main`.
   * **Mainnet (configurable)**: deploy on push/merge to `main` under a protected environment.
   * **Upgrade safety validation** via flattened previous/current contracts and `script/upgrades/ValidateUpgrade.s.sol`.
-  * **Flattening** On pushes to dev only (after tests and upgrade-safety pass), CI flattens all contracts listed in `broadcast/**/run-latest.json` to `upgrades/snapshots/current/`, then backs up that snapshot to `upgrades/snapshots/previous/` and auto-commits the changes.
+  * **Flattening** On pushes to dev only (after tests and upgrade-safety pass), CI flattens all contracts listed in `broadcast/**/run-latest.json` to `upgrades/snapshots/current/`, then backs up that snapshot to `upgrades/snapshots/previous/` and auto-commits the changes. The set of contracts to flatten is derived only from Foundry’s broadcast artifact `broadcast/**/run-latest.json`. This file is the authoritative source of truth for flattening paths and for deployment address summaries.
 * Direction: **adopt Blockscout verification** and **drop Etherscan** support.
 * Intended to be reused across multiple repos; not for continuous auto-upgrades of production, but to guarantee end-to-end deployability and unblock frontends.
 * **Reusable composite GitHub Action:** All CI/CD steps (build/test, upgrade-safety, deploy, verify, summarize, artifacts) are consumed via a single composite action. Workflows become thin wrappers that invoke the action with network-specific inputs.
@@ -118,6 +118,7 @@ contract Deploy is Script {
 * Changing ProxyAdmin ownership or production proxy state via CI (out of scope).
 * On-chain migrations or data transforms (out of scope).
 * UUPS proxy pattern is out of scope. Only Transparent Proxy is supported.
+* On testnet, current behavior is to re-deploy fresh proxies and implementations on each PR to `main`. Upgrade-in-place for testnet may be introduced later as a configurable option but is out of scope for this MVP.
 
 ### Technical Functionality / Off-Scope Reasoning / Tradeoffs
 
@@ -169,7 +170,7 @@ contract Deploy is Script {
 **Upgrade-safety behavior**
 
 1. `forge clean && forge build`
-2. Build current snapshot (contracts from `run-latest.json`) into `upgrades/snapshots/current/*.sol`
+2. Build current snapshot (contracts from `run-latest.json`) into `upgrades/snapshots/current/*.sol`. The list of contracts to snapshot/flatten is read from `broadcast/**/run-latest.json`. 
 3. If `upgrades/snapshots/baseline/*.sol` exists, run `script/upgrades/ValidateUpgrade.s.sol`.
    Else → mark Baseline Missing and follow the init policy below.
 
@@ -196,7 +197,7 @@ On push to `dev` (after build/tests pass), if baseline is missing:
 1. **CI triggers** on `pull_request` to `main`.
 2. **Checkout repo**; install Foundry; forge install; build; test
 3. **Upgrade-safety validation** runs (`forge build`; check `upgrades/snapshots/previous`; run `script/upgrades/ValidateUpgrade.s.sol` if present).
-4. **Deploy (upgradeable)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) using a proxy pattern (Transparent). Create or upgrade a **testnet** proxy but never touch **mainnet** production proxy. Secrets: `TESTNET_PRIVATE_KEY`, `TESTNET_RPC_URL`.
+4. **Deploy (upgradeable, re-deploy fresh)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) to the selected testnet. Current behavior: each run creates a new ProxyAdmin, implementation, and proxy (fresh addresses). Secrets: `TESTNET_PRIVATE_KEY`, `TESTNET_RPC_URL`.
 5. **Parse deployed addresses** from Foundry’s broadcast artifact.
 6. **Verify** each contract on **Blockscout** (**testnet**) with correct compiler metadata & constructor args; wait for indexing (sleep with backoff).
 7. **Summarize** in `$GITHUB_STEP_SUMMARY` (Markdown table with explorer links).
