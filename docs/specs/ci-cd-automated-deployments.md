@@ -36,8 +36,11 @@ To make workflows reusable across repos, CI expects a **canonical wrapper**:
     --slow \
     -vvvv
   ```
+- The deploy script must honor a mode flag: `DEPLOY_MODE ∈ {"testnet-fresh","impl-only"}`.
 
-**Broadcast artifact contract:** CI will parse the Foundry broadcast artifact to extract deployed addresses.
+**Env mapping (CI):** the workflow must export `PRIVATE_KEY` from the environment-specific secret, e.g. `PRIVATE_KEY=$TESTNET_PRIVATE_KEY` on testnet and `PRIVATE_KEY=$MAINNET_PRIVATE_KEY` on mainnet.
+
+**Deployment artifact schema (output)** CI will parse the Foundry broadcast artifact to extract deployed addresses.
 
   ```json
   {
@@ -46,6 +49,8 @@ To make workflows reusable across repos, CI expects a **canonical wrapper**:
     ]
   }
   ```
+
+This is the output written to `deployments/{network}/deployment.json`, derived by parsing Foundry’s `broadcast/**/run-latest.json`.
 
 * **Deploy script (example):**
 
@@ -100,7 +105,7 @@ contract Deploy is Script {
 
 * **On every PR to `main`:** build, test, upgrade-safety validate, deploy to **testnet**, verify on **Blockscout**, publish addresses + explorer links in **PR comment** and **Step Summary**, and upload **deployment artifacts**.
 * **On merge/push to `main`:** run the same pipeline against **mainnet (configurable)** under a protected environment. The job must not change the production proxy’s implementation. It deploys a new implementation only. All production upgrades remain manual and explicit.
-* **Upgrade-safety validation** runs on every pull request. Snapshot formatting & tracking (flatten → baseline) happens only after a merge into `dev`.
+* **Upgrade-safety validation** runs on every pull request. Snapshot formatting & tracking (flatten → baseline) happens only after a push to `dev`.
 * **Repeatability & Reusability:** all CI/CD steps are packaged into a reusable composite GitHub Action. Repos only need thin YAML wrappers that call this action with network/environment inputs.
 * **Artifact schema:** every deployment emits one JSON containing, per contract:`sourcePathAndName`, `address`.
 * **Secrets & environments (per-repo):** Each repository owns its GitHub Environments and secrets.
@@ -184,7 +189,9 @@ On push to `dev` (after build/tests pass), if baseline is missing:
 **Snapshot/flatten behavior (dev-only)**
 
 1. Flatten -> `upgrades/snapshots/current/*.sol` (contracts from `run-latest.json`)
-2. Replace baseline: delete `upgrades/snapshots/previous/`, copy `current` to `previous`
+2. Promote baseline:
+   - If baseline exists: copy baseline -> previous
+   - Copy current -> baseline
 3. **Auto-commit** changes under `upgrades/snapshots/**/*.sol` with message
    `chore: auto-flatten contracts after validation passes [skip ci]`
 
