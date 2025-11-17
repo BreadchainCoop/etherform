@@ -261,7 +261,7 @@ sequenceDiagram
   GH->>GH: Upgrade Safety Validation (build + check snapshots)
   alt previous snapshots present
     GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
-    note right of GH: Validator performs:\n1) Storage layout diff (append-only)\n2) Proxy semantics (Transparent)\n3) Dry-run upgrade + invariants\n4) Reporting
+    note right of GH: Validator performs:<br/>1) Storage layout diff (append-only)<br/>2) Proxy semantics (Transparent)<br/>3) Dry-run upgrade + invariants<br/>4) Reporting
     alt validation OK
       GH-->>GH: status = pass
     else validation FAIL
@@ -317,7 +317,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
   [*] --> Flatten
-  Flatten: Read broadcast/**/run-latest.json\nDerive contract list\nFlatten to upgrades/snapshots/current/*.sol
+  Flatten: Read broadcast/**/run-latest.json<br/>Derive contract list<br/>Flatten to upgrades/snapshots/current/*.sol
   Flatten --> Promote : baseline exists
   Flatten --> InitBaseline : baseline missing
 
