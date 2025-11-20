@@ -91,6 +91,17 @@ contract Deploy is Script {
 
 ```
 
+
+**Compiler configuration (repo-level requirement)**
+
+The repository’s `foundry.toml` must set:
+
+- `bytecode_hash = "none"`
+- `cbor_metadata = false`
+
+These settings are required for deterministic bytecode and constructor-arg extraction. CI will validate that builds use this configuration and fail otherwise.
+
+
 ### Stakeholders
 
 * **Smart Contracts Team** — authors of contracts and deployment scripts.
@@ -343,9 +354,7 @@ stateDiagram-v2
 ## 6. Edge cases and concessions
 
 * **Blockscout indexing lag**: we add waits/backoff. Verification may be marked as “pending” in summary and retried by re-running workflow.
-* **Constructor args**: derived from Foundry broadcast artifacts. CI reads `broadcast/**/run-latest.json`, takes each deployment tx input, loads the contract's creation bytecode from `out/**/<Contract>.json`, and computes `constructorArgsHex = input[len(creationBytecode):]`.
-* CI compiles with `bytecode_hash = "none"` and `cbor_metadata = false` to avoid metadata-hash drift. If the artifact bytecode is not a prefix of input, the job fails with a metadata-mismatch hint.
-* **Flatten snapshots**: derive the set of contracts from Foundry’s broadcast artifact (`broadcast/**/run-latest.json`).
+* CI compiles with `bytecode_hash = "none"` and `cbor_metadata = false` to avoid metadata-hash drift. These must also be the repo’s compiler settings. As part of the pipeline, we validate that the artifact bytecode is a prefix of the deployment input; if not, the job fails with a metadata-mismatch hint and CI/CD is marked failed.
 * **Gas handling**: rely on provider-estimated gas and use `--slow` to avoid nonce/rate issues. No manual gas-price override in MVP.
 
 ---
