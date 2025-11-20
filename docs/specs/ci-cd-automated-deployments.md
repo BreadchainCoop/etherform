@@ -314,6 +314,8 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
   [*] --> Flatten
+  [*] --> Deploy : PR to main OR Push to main
+
   Flatten: Read broadcast/**/run-latest.json<br/>Derive contract list<br/>Flatten to upgrades/snapshots/current/*.sol
   Flatten --> Promote : baseline exists
   Flatten --> InitBaseline : baseline missing
@@ -329,6 +331,11 @@ stateDiagram-v2
   InitBaseline --> CommitInit
   CommitInit: init upgrade baseline (skip ci)
   CommitInit --> [*]
+
+  Deploy: Deploy via forge script<br/>to testnet/mainnet
+  Deploy --> Verify
+  Verify: Blockscout verification<br/>write deployments/{network}/deployment.json<br/>PR comment + step summary
+  Verify --> [*]
 ```
 
 ---
