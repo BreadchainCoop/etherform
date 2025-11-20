@@ -36,7 +36,6 @@ To make workflows reusable across repos, CI expects a **canonical wrapper**:
     --slow \
     -vvvv
   ```
-- The deploy script must honor a mode flag: `DEPLOY_MODE ∈ {"testnet-fresh","impl-only"}`.
 
 **Env mapping (CI):** the workflow must export `PRIVATE_KEY` from the environment-specific secret, e.g. `PRIVATE_KEY=$TESTNET_PRIVATE_KEY` on testnet and `PRIVATE_KEY=$MAINNET_PRIVATE_KEY` on mainnet.
 
@@ -261,8 +260,7 @@ sequenceDiagram
   GH->>GH: Upgrade Safety Validation (build + check snapshots)
   alt previous snapshots present
     GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
-    note right of GH: Validator performs:<br/>1) Storage layout diff (append-only)<br/>2) Proxy semantics (Transparent)<br/>3) Dry-run upgrade + invariants<br/>4) Reporting
-    alt validation OK
+    OpenZepplin upgrade safety plugin validations
       GH-->>GH: status = pass
     else validation FAIL
       GH-->>GH: status = fail (block deployment)
@@ -280,11 +278,10 @@ sequenceDiagram
   end
 
   alt PR -> Testnet
-    note over GH: Current behavior: re-deploy fresh ProxyAdmin + Impl + Proxy
     GH->>RPC: forge script --broadcast (Testnet)
   else Push -> Mainnet
     note over GH: Implementation-only (no proxy/ProxyAdmin changes)
-    GH->>RPC: forge script --broadcast (Mainnet impl-only)
+    GH->>RPC: forge script --broadcast
   end
 
   RPC-->>GH: Tx receipts + contract addresses
