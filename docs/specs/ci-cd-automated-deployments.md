@@ -264,7 +264,6 @@ sequenceDiagram
   participant GH as GitHub Actions
   participant RPC as RPC (testnet/mainnet)
   participant BS as Blockscout API
-  participant ART as Artifact Store
 
   Dev->>GH: Open PR to main / Push to main / Push to dev
   GH->>GH: Checkout, Install Foundry, Build, Test
