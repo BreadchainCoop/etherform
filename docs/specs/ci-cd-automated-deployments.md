@@ -271,7 +271,7 @@ sequenceDiagram
   GH->>GH: Upgrade Safety Validation (build + check snapshots)
   alt previous snapshots present
     GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
-    OpenZepplin upgrade safety plugin validations
+    note right of GH: OpenZepplin upgrade safety plugin validations
       GH-->>GH: status = pass
     else validation FAIL
       GH-->>GH: status = fail (block deployment)
@@ -295,31 +295,10 @@ sequenceDiagram
     GH->>RPC: forge script --broadcast
   end
 
-  RPC-->>GH: Tx receipts + contract addresses
-  GH->>GH: Parse broadcast/**/run-latest.json → {sourcePathAndName, address}
+  GH->>GH: Parse broadcast/**/run-latest.json to {sourcePathAndName, address}
   GH->>BS: verify-contract (per module) with constructor args
   BS-->>GH: Verification OK / pending (bounded backoff)
-  GH->>ART: Write deployments/{network}/deployment.json
   GH-->>Dev: PR Comment / Step Summary with explorer links
-```
-
-```mermaid
-stateDiagram-v2
-  [*] --> Build
-  Build --> Validate
-  Validate --> Skip : baseline missing (no upgrades/snapshots/baseline/*.sol)
-  Validate --> Pass : OZ checks pass
-  Validate --> Fail : OZ checks fail
-
-  Skip --> Deploy : PR to main OR Push to main
-  Pass --> Deploy : PR to main OR Push to main
-  Fail --> [*]
-
-  Skip --> Flatten : Push to dev
-  Pass --> Flatten : Push to dev
-
-  Deploy --> [*]
-  Flatten --> [*]
 ```
 
 ```mermaid
