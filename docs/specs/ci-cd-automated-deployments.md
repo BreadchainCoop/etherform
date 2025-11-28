@@ -272,6 +272,7 @@ sequenceDiagram
   alt previous snapshots present
     GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
     note right of GH: OpenZepplin upgrade safety plugin validations
+    alt validation OK
       GH-->>GH: status = pass
     else validation FAIL
       GH-->>GH: status = fail (block deployment)
