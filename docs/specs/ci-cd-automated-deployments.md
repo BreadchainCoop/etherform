@@ -408,57 +408,42 @@ sequenceDiagram
   participant BS as Blockscout API(s)
 
   Dev->>GH: Open PR to main
-
-  rect rgb(240, 248, 255)
-    note over GH: Phase 1: Validation (every push)
-    GH->>GH: Checkout, Install Foundry, Build, Test
-    GH->>GH: Upgrade Safety Validation (build + check snapshots)
-    alt previous snapshots present
-      GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
-      note right of GH: OpenZeppelin upgrade safety plugin validations
-      alt validation OK
-        GH-->>GH: status = pass
-      else validation FAIL
-        GH-->>GH: status = fail (block deployment)
-      end
-    else no snapshots (initial deployment)
-      GH-->>GH: skip validator (log message)
+  GH->>GH: Checkout, Install Foundry, Build, Test
+  GH->>GH: Upgrade Safety Validation (build + check snapshots)
+  alt previous snapshots present
+    GH->>GH: forge script script/upgrades/ValidateUpgrade.s.sol
+    note right of GH: OpenZeppelin upgrade safety plugin validations
+    alt validation OK
+      GH-->>GH: status = pass
+    else validation FAIL
+      GH-->>GH: status = fail (block deployment)
     end
-    GH-->>Dev: Build/Test/Upgrade-safety status ✓
+  else no snapshots (initial deployment)
+    GH-->>GH: skip validator (log message)
   end
+  GH-->>Dev: Build/Test/Upgrade-safety status ✓
 
-  note over Dev,GH: Testnet deploy blocked until approval
+  note over Dev,Rev: Testnet deploy blocked until approval
 
   Rev->>GH: Approve PR
+  GH->>RPC: forge script --broadcast (Testnet)
+  GH->>GH: Parse broadcast/**/run-latest.json
+  GH->>BS: verify-contract on testnet Blockscout
+  BS-->>GH: Verification OK / pending
+  GH->>GH: Write deployments/testnet/deployment.json
+  GH-->>Dev: PR Comment with testnet addresses
 
-  rect rgb(240, 255, 240)
-    note over GH: Phase 2: Testnet Deploy (after approval)
-    GH->>GH: Check PR has approval
-    GH->>RPC: forge script --broadcast (Testnet)
-    GH->>GH: Parse broadcast/**/run-latest.json
-    GH->>BS: verify-contract on testnet Blockscout
-    BS-->>GH: Verification OK / pending
-    GH->>GH: Write deployments/testnet/deployment.json
-    GH-->>Dev: PR Comment with testnet addresses
-    GH-->>GH: deploy-testnet status = pass
-  end
-
-  note over Dev,GH: PR can now be merged (all required checks pass)
+  note over Dev,GH: PR can now be merged (deploy-testnet passed)
 
   Dev->>GH: Merge PR to main
 
-  rect rgb(255, 248, 240)
-    note over GH: Phase 3: Mainnet Deploy (on push to main)
-    note over GH: Read .github/deploy-networks.json
-    loop For each configured mainnet
-      note over GH: Implementation-only (no proxy/ProxyAdmin changes)
-      GH->>GH: Enter network's GitHub Environment
-      GH->>RPC: forge script --broadcast (network-specific RPC)
-      GH->>GH: Parse broadcast/**/run-latest.json
-      GH->>BS: verify-contract on network's Blockscout
-      BS-->>GH: Verification OK / pending
-      GH->>GH: Write deployments/{network}/deployment.json
-    end
+  loop For each configured mainnet
+    note over GH: Implementation-only (no proxy/ProxyAdmin changes)
+    GH->>RPC: forge script --broadcast (network-specific RPC)
+    GH->>GH: Parse broadcast/**/run-latest.json
+    GH->>BS: verify-contract on network's Blockscout
+    BS-->>GH: Verification OK / pending
+    GH->>GH: Write deployments/{network}/deployment.json
   end
 
   opt After all mainnet deploys & checks passed
@@ -474,69 +459,29 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-  [*] --> BuildTest : PR opened/updated
+  [*] --> Flatten
+  [*] --> Deploy : PR to main OR Push to main
 
-  state "PR Workflow" as PRWorkflow {
-    BuildTest: Build, Test, Upgrade-Safety
-    BuildTest --> WaitApproval : validation passes
+  Flatten: Read broadcast/**/run-latest.json<br/>Derive contract list<br/>Flatten to upgrades/snapshots/current/*.sol
+  Flatten --> Promote : baseline exists
+  Flatten --> InitBaseline : baseline missing
 
-    WaitApproval: Awaiting PR Approval
-    note right of WaitApproval: deploy-testnet status = pending
-    WaitApproval --> DeployTestnet : PR approved
-    WaitApproval --> WaitApproval : not approved (blocked)
+  Promote: prepare baseline replacement
+  Promote --> CopyPrev : copy baseline to previous
+  CopyPrev --> ReplaceBaseline : copy current to baseline
+  ReplaceBaseline --> CommitUpdate
+  CommitUpdate: auto-flatten after validation (skip ci)
+  CommitUpdate --> [*]
 
-    DeployTestnet: Deploy to testnet(s)
-    DeployTestnet --> VerifyTestnet
-    VerifyTestnet: Verify on Blockscout<br/>Write deployments/testnet/deployment.json
-    VerifyTestnet --> PRComment
-    PRComment: PR comment with addresses<br/>deploy-testnet status = pass
-    PRComment --> ReadyToMerge
-    ReadyToMerge: All required checks pass<br/>PR can be merged
-  }
+  InitBaseline: init baseline from current
+  InitBaseline --> CommitInit
+  CommitInit: init upgrade baseline (skip ci)
+  CommitInit --> [*]
 
-  ReadyToMerge --> [*] : PR closed without merge
-
-  [*] --> BuildTestMain : Push to main (merge)
-
-  state "Mainnet Workflow" as MainnetWorkflow {
-    BuildTestMain: Build, Test, Upgrade-Safety
-    BuildTestMain --> DeployMainnets
-
-    DeployMainnets: Read .github/deploy-networks.json
-    DeployMainnets --> NetworkLoop
-
-    state NetworkLoop {
-      [*] --> DeployNetwork
-      DeployNetwork: Enter GitHub Environment<br/>Deploy impl to network
-      DeployNetwork --> VerifyNetwork
-      VerifyNetwork: Verify on network's Blockscout<br/>Write deployments/{network}/deployment.json
-      VerifyNetwork --> NextNetwork
-      NextNetwork --> DeployNetwork : more networks
-      NextNetwork --> [*] : all done
-    }
-
-    NetworkLoop --> Flatten
-
-    Flatten: Read broadcast/**/run-latest.json<br/>Derive contract list<br/>Flatten to upgrades/snapshots/current/*.sol
-    Flatten --> Promote : baseline exists
-    Flatten --> InitBaseline : baseline missing
-
-    Promote: prepare baseline replacement
-    Promote --> CopyPrev : copy baseline to previous
-    CopyPrev --> ReplaceBaseline : copy current to baseline
-    ReplaceBaseline --> CommitUpdate
-    CommitUpdate: auto-flatten after validation (skip ci)
-    CommitUpdate --> Summary
-
-    InitBaseline: init baseline from current
-    InitBaseline --> CommitInit
-    CommitInit: init upgrade baseline (skip ci)
-    CommitInit --> Summary
-
-    Summary: Step Summary with all networks
-  }
-
-  Summary --> [*]
+  Deploy: Deploy via forge script<br/>to testnet (after approval) or mainnet(s)
+  Deploy --> Verify
+  Verify: Blockscout verification<br/>write deployments/{network}/deployment.json<br/>PR comment + step summary
+  Verify --> [*]
 ```
 
 ---
