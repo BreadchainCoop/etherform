@@ -1,4 +1,4 @@
-# Technical Spec — Auto CI/CD: Testnet & Mainnet Deployments (Foundry + Blockscout)
+# Technical Spec — Auto CI/CD: Testnet & Mainnet Deployments With Upgrade Safety Validation (Foundry + Blockscout)
 
 ## 1. Background
 
@@ -361,3 +361,4 @@ stateDiagram-v2
 * **Deployment artifacts** — Canonical JSON stored under `deployments/{network}/deployment.json` with per-contract metadata used by frontends.
 
 * **GitHub Environments** — Protected contexts (`testnet`, `production`) holding secrets (RPC URLs, private keys) and optional manual approvals.
+
