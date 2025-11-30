@@ -520,3 +520,221 @@ stateDiagram-v2
 
 * **Network Configuration** — JSON file at `.github/deploy-networks.json` defining testnet and mainnet targets. Each entry specifies network name, chain ID, Blockscout URL, and GitHub Environment name.
 
+---
+
+## Appendix A: Reference Workflow Diagrams
+
+The following diagrams illustrate real-world GitHub Actions workflows from [commune-os-sc](https://github.com/communetxyz/commune-os-sc/tree/main/.github/workflows).
+
+### GitHub Links to Workflow Files
+
+| Workflow | GitHub Link |
+|----------|-------------|
+| Deploy to Arbitrum | [deploy-arbitrum.yml](https://github.com/communetxyz/commune-os-sc/blob/main/.github/workflows/deploy-arbitrum.yml) |
+| Deploy to Gnosis | [deploy-gnosis.yml](https://github.com/communetxyz/commune-os-sc/blob/main/.github/workflows/deploy-gnosis.yml) |
+| Deploy to Testnet | [deploy-testnet.yml](https://github.com/communetxyz/commune-os-sc/blob/main/.github/workflows/deploy-testnet.yml) |
+| CI Tests | [test.yml](https://github.com/communetxyz/commune-os-sc/blob/main/.github/workflows/test.yml) |
+
+---
+
+### A.1 Deploy to Arbitrum Workflow
+
+**Triggers:** Push to `main`, Manual dispatch
+
+```mermaid
+flowchart TD
+    subgraph Triggers
+        A[Push to main] --> B[Start Workflow]
+        C[Manual Dispatch] --> B
+    end
+
+    subgraph Job: deploy-arbitrum
+        B --> D[Checkout Repository]
+        D --> E[Install Foundry]
+        E --> F[Install Dependencies]
+        F --> G[Build Contracts]
+        G --> H[Run Tests]
+        H --> I[Deploy CommuneOS]
+
+        subgraph Deployed Contracts
+            I --> I1[CommuneOS]
+            I --> I2[CommuneRegistry]
+            I --> I3[MemberRegistry]
+            I --> I4[ChoreScheduler]
+            I --> I5[TaskManager]
+            I --> I6[VotingModule]
+            I --> I7[CollateralManager]
+        end
+
+        I --> J[Wait for Indexing<br/>60 seconds]
+        J --> K[Verify on Blockscout]
+
+        subgraph Verify Contracts
+            K --> K1[Verify CommuneOS]
+            K1 --> K2[Verify CollateralManager]
+            K2 --> K3[Verify CommuneRegistry]
+            K3 --> K4[Verify MemberRegistry]
+            K4 --> K5[Verify ChoreScheduler]
+            K5 --> K6[Verify TaskManager]
+            K6 --> K7[Verify VotingModule]
+        end
+
+        K --> L[Create Deployment Summary]
+        L --> M[Save Deployment Artifacts]
+        M --> N[Upload Artifacts]
+        N --> O{Is PR?}
+        O -->|Yes| P[Comment on PR]
+        O -->|No| Q[Done]
+        P --> Q
+    end
+```
+
+---
+
+### A.2 Deploy to Gnosis Chain Workflow
+
+**Triggers:** Push to `main`, Manual dispatch
+
+```mermaid
+flowchart TD
+    subgraph Triggers
+        A[Push to main] --> B[Start Workflow]
+        C[Manual Dispatch] --> B
+    end
+
+    subgraph Job: deploy-gnosis
+        B --> D[Checkout Repository]
+        D --> E[Install Foundry]
+        E --> F[Install Dependencies]
+        F --> G[Build Contracts]
+        G --> H[Run Tests]
+        H --> I[Deploy CommuneOS]
+
+        subgraph Deployed Contracts
+            I --> I1[CommuneOS]
+            I --> I2[CommuneRegistry]
+            I --> I3[MemberRegistry]
+            I --> I4[ChoreScheduler]
+            I --> I5[TaskManager]
+            I --> I6[VotingModule]
+            I --> I7[CollateralManager]
+        end
+
+        I --> J[Wait for Indexing<br/>60 seconds]
+        J --> K[Verify on Blockscout]
+
+        subgraph Verify Contracts
+            K --> K1[Verify CommuneOS]
+            K1 --> K2[Verify CollateralManager]
+            K2 --> K3[Verify CommuneRegistry]
+            K3 --> K4[Verify MemberRegistry]
+            K4 --> K5[Verify ChoreScheduler]
+            K5 --> K6[Verify TaskManager]
+            K6 --> K7[Verify VotingModule]
+        end
+
+        K --> L[Create Deployment Summary]
+        L --> M[Save Deployment Artifacts]
+        M --> N[Upload Artifacts]
+        N --> O{Is PR?}
+        O -->|Yes| P[Comment on PR]
+        O -->|No| Q[Done]
+        P --> Q
+    end
+```
+
+---
+
+### A.3 Deploy to Holesky Testnet Workflow
+
+**Triggers:** Pull Request to `main`, Manual dispatch
+
+```mermaid
+flowchart TD
+    subgraph Triggers
+        A[PR to main] --> B[Start Workflow]
+        C[Manual Dispatch] --> B
+    end
+
+    subgraph Job: deploy-testnet
+        B --> D[Checkout Repository]
+        D --> E[Install Foundry]
+        E --> F[Install Dependencies]
+        F --> G[Build Contracts]
+        G --> H[Run Tests]
+        H --> I[Deploy CommuneOS]
+
+        subgraph Deployed Contracts
+            I --> I1[CommuneOS]
+            I --> I2[CommuneRegistry]
+            I --> I3[MemberRegistry]
+            I --> I4[ChoreScheduler]
+            I --> I5[TaskManager]
+            I --> I6[VotingModule]
+            I --> I7[CollateralManager]
+        end
+
+        I --> J[Verify on Etherscan<br/>wait 300s first]
+
+        subgraph Verify Contracts
+            J --> J1[Verify CommuneOS]
+            J1 --> J2[Verify CollateralManager]
+            J2 --> J3[Verify CommuneRegistry]
+            J3 --> J4[Verify MemberRegistry]
+            J4 --> J5[Verify ChoreScheduler]
+            J5 --> J6[Verify TaskManager]
+            J6 --> J7[Verify VotingModule]
+        end
+
+        J --> K[Create Deployment Summary]
+        K --> L[Save Deployment Artifacts]
+        L --> M[Upload Artifacts]
+        M --> N{Is PR?}
+        N -->|Yes| O[Comment on PR]
+        N -->|No| P[Done]
+        O --> P
+    end
+```
+
+---
+
+### A.4 CI Test Workflow
+
+**Triggers:** Push (any branch), Pull Request (any branch), Manual dispatch
+
+```mermaid
+flowchart TD
+    subgraph Triggers
+        A[Push] --> B[Start Workflow]
+        C[Pull Request] --> B
+        D[Manual Dispatch] --> B
+    end
+
+    subgraph Job: check
+        B --> E[Checkout Repository]
+        E --> F[Install Foundry]
+        F --> G[Show Forge Version]
+        G --> H{Forge fmt check}
+        H -->|Pass| I{Forge build}
+        H -->|Fail| X[Fail Workflow]
+        I -->|Pass| J{Forge test}
+        I -->|Fail| X
+        J -->|Pass| K[Success]
+        J -->|Fail| X
+    end
+```
+
+---
+
+### Workflow Comparison
+
+| Feature | Arbitrum | Gnosis | Testnet | CI |
+|---------|----------|--------|---------|-----|
+| **Chain ID** | 42161 | 100 | 17000 | N/A |
+| **Trigger: Push** | main | main | - | any |
+| **Trigger: PR** | - | - | main | any |
+| **Environment** | production | production | testnet | - |
+| **Verifier** | Blockscout | Blockscout | Etherscan | N/A |
+| **Wait Time** | 60s | 60s | 300s | N/A |
+| **Format Check** | No | No | No | Yes |
+| **Contract Deploy** | Yes | Yes | Yes | No |
