@@ -38,10 +38,22 @@ on:
         description: 'Path to deployment script'
         type: string
         default: 'script/Deploy.s.sol:Deploy'
-      network-config-path:
-        description: 'Path to network configuration JSON'
+      testnet-blockscout-url:
+        description: 'Blockscout URL for testnet verification and explorer links'
         type: string
-        default: '.github/deploy-networks.json'
+        default: 'https://eth-sepolia.blockscout.com'
+      testnet-name:
+        description: 'Testnet network name for display'
+        type: string
+        default: 'Sepolia'
+      mainnet-blockscout-url:
+        description: 'Blockscout URL for mainnet verification and explorer links'
+        type: string
+        default: 'https://eth-sepolia.blockscout.com'
+      mainnet-name:
+        description: 'Mainnet network name for display'
+        type: string
+        default: 'Sepolia'
       indexing-wait:
         description: 'Seconds to wait for indexer before verification'
         type: number
@@ -220,13 +232,11 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Read network config
+      - name: Set network config
         id: network
         run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.testnets[0].name' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
+          echo "blockscout_url=${{ inputs.testnet-blockscout-url }}" >> $GITHUB_OUTPUT
+          echo "network_name=${{ inputs.testnet-name }}" >> $GITHUB_OUTPUT
 
       - name: Deploy contracts
         env:
@@ -388,15 +398,11 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Read network config
+      - name: Set network config
         id: network
         run: |
-          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.mainnets[0].name' ${{ inputs.network-config-path }})
-          ENVIRONMENT=$(jq -r '.mainnets[0].environment' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
-          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "blockscout_url=${{ inputs.mainnet-blockscout-url }}" >> $GITHUB_OUTPUT
+          echo "network_name=${{ inputs.mainnet-name }}" >> $GITHUB_OUTPUT
 
       - name: Deploy contracts
         env:
