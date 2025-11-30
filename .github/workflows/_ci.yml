@@ -1,0 +1,41 @@
+# Reusable CI workflow for Foundry projects
+# Usage: jobs.<job>.uses: ./.github/workflows/_ci.yml
+name: CI (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      check-formatting:
+        description: 'Run forge fmt --check'
+        type: boolean
+        default: true
+      test-verbosity:
+        description: 'Test verbosity level (v, vv, vvv, vvvv)'
+        type: string
+        default: 'vvv'
+
+jobs:
+  check:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Check formatting
+        if: inputs.check-formatting
+        run: forge fmt --check
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Run tests
+        run: forge test -${{ inputs.test-verbosity }}

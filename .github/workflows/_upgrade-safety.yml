@@ -1,0 +1,48 @@
+# Reusable upgrade safety validation workflow
+# Usage: jobs.<job>.uses: ./.github/workflows/_upgrade-safety.yml
+name: Upgrade Safety (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      baseline-path:
+        description: 'Path to baseline contracts for comparison'
+        type: string
+        default: 'test/upgrades/baseline'
+      fallback-path:
+        description: 'Fallback path if baseline not found'
+        type: string
+        default: 'test/upgrades/previous'
+      validation-script:
+        description: 'Path to validation script'
+        type: string
+        default: 'script/upgrades/ValidateUpgrade.s.sol'
+
+jobs:
+  upgrade-safety:
+    name: Validate Upgrade Safety
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run upgrade safety validation
+        run: |
+          forge clean && forge build
+
+          # Check for baseline contracts (primary path or fallback)
+          if [ -d "${{ inputs.baseline-path }}" ] && ls ${{ inputs.baseline-path }}/*.sol 1> /dev/null 2>&1; then
+            echo "Baseline contracts found in ${{ inputs.baseline-path }}, running upgrade validation..."
+            forge script ${{ inputs.validation-script }} -vvv
+          elif [ -d "${{ inputs.fallback-path }}" ] && ls ${{ inputs.fallback-path }}/*.sol 1> /dev/null 2>&1; then
+            echo "Baseline contracts found in ${{ inputs.fallback-path }} (fallback path), running upgrade validation..."
+            forge script ${{ inputs.validation-script }} -vvv
+          else
+            echo "::warning::Baseline missing — will auto-init on first merge to main"
+            echo "No baseline contracts found, skipping upgrade validation (initial deployment)"
+          fi

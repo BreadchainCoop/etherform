@@ -1,66 +1,125 @@
-## Foundry
+# Etherform
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Reusable GitHub Actions workflows for Foundry smart contract CI/CD with upgrade safety validation.
 
-Foundry consists of:
+## Workflows
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
-
-## Documentation
-
-https://book.getfoundry.sh/
+| Workflow | Description |
+|----------|-------------|
+| `_ci.yml` | Build, test, and format check |
+| `_upgrade-safety.yml` | OpenZeppelin upgrade safety validation |
+| `_deploy-testnet.yml` | Testnet deployment with Blockscout verification |
+| `_deploy-mainnet.yml` | Mainnet deployment with matrix support and 3-tier snapshot rotation |
 
 ## Usage
 
-### Build
+Reference the reusable workflows in your Foundry project:
 
-```shell
-$ forge build
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  ci:
+    uses: BreadchainCoop/etherform/.github/workflows/_ci.yml@main
+    with:
+      check-formatting: true
+      test-verbosity: 'vvv'
 ```
 
-### Test
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy
 
-```shell
-$ forge test
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: BreadchainCoop/etherform/.github/workflows/_ci.yml@main
+
+  deploy:
+    needs: [ci]
+    uses: BreadchainCoop/etherform/.github/workflows/_deploy-mainnet.yml@main
+    secrets:
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+      RPC_URL: ${{ secrets.RPC_URL }}
 ```
 
-### Format
+## Configuration
 
-```shell
-$ forge fmt
+### Network Configuration
+
+Create `.github/deploy-networks.json` in your repository:
+
+```json
+{
+  "testnets": [
+    {
+      "name": "sepolia",
+      "chain_id": 11155111,
+      "blockscout_url": "https://eth-sepolia.blockscout.com",
+      "environment": "testnet"
+    }
+  ],
+  "mainnets": [
+    {
+      "name": "ethereum",
+      "chain_id": 1,
+      "blockscout_url": "https://eth.blockscout.com",
+      "environment": "production-ethereum"
+    }
+  ]
+}
 ```
 
-### Gas Snapshots
+### Secrets Required
 
-```shell
-$ forge snapshot
-```
+| Secret | Description |
+|--------|-------------|
+| `PRIVATE_KEY` | Deployer wallet private key |
+| `RPC_URL` | Network RPC endpoint |
 
-### Anvil
+## Workflow Inputs
 
-```shell
-$ anvil
-```
+### `_ci.yml`
 
-### Deploy
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `check-formatting` | boolean | `true` | Run `forge fmt --check` |
+| `test-verbosity` | string | `'vvv'` | Test verbosity (`v`, `vv`, `vvv`, `vvvv`) |
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+### `_upgrade-safety.yml`
 
-### Cast
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `baseline-path` | string | `'test/upgrades/baseline'` | Path to baseline contracts |
+| `fallback-path` | string | `'test/upgrades/previous'` | Fallback path if baseline missing |
+| `validation-script` | string | `'script/upgrades/ValidateUpgrade.s.sol'` | Validation script path |
 
-```shell
-$ cast <subcommand>
-```
+### `_deploy-testnet.yml`
 
-### Help
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `deploy-script` | string | `'script/Deploy.s.sol:Deploy'` | Deployment script |
+| `network-config-path` | string | `'.github/deploy-networks.json'` | Network config path |
+| `network-index` | number | `0` | Index in testnets array |
+| `indexing-wait` | number | `60` | Seconds to wait before verification |
 
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+### `_deploy-mainnet.yml`
+
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `deploy-script` | string | `'script/Deploy.s.sol:Deploy'` | Deployment script |
+| `network-config-path` | string | `'.github/deploy-networks.json'` | Network config path |
+| `network` | string | `''` | Specific network (empty = all) |
+| `indexing-wait` | number | `60` | Seconds to wait before verification |
+| `flatten-contracts` | boolean | `true` | Flatten and commit snapshots |
+| `upgrades-path` | string | `'test/upgrades'` | Path for flattened snapshots |
+
+## Example Project
+
+See the [examples/foundry-counter](examples/foundry-counter) submodule for a complete working example.
