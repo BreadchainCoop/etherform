@@ -50,6 +50,10 @@ on:
         description: 'Flatten and commit contract snapshots after mainnet deploy'
         type: boolean
         default: true
+      init-baseline-without-deploy:
+        description: 'Initialize baseline on merge to main even if deploy-on-main is disabled'
+        type: boolean
+        default: false
       upgrades-path:
         description: 'Path for flattened contract snapshots'
         type: string
@@ -438,7 +442,8 @@ jobs:
       always() &&
       needs.ci.result == 'success' &&
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
-      (needs.deploy-mainnet.result == 'success' || needs.deploy-mainnet.result == 'skipped') &&
+      (needs.deploy-mainnet.result == 'success' ||
+       (needs.deploy-mainnet.result == 'skipped' && inputs.init-baseline-without-deploy)) &&
       inputs.flatten-contracts &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
