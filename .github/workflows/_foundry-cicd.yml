@@ -24,10 +24,6 @@ on:
         description: 'Path to baseline contracts for upgrade comparison'
         type: string
         default: 'test/upgrades/baseline'
-      validation-script:
-        description: 'Path to upgrade validation script'
-        type: string
-        default: 'script/upgrades/ValidateUpgrade.s.sol'
 
       # Deploy Options
       deploy-on-pr:
@@ -112,22 +108,60 @@ jobs:
 
       - name: Run upgrade safety validation
         run: |
+          set -euo pipefail
           forge clean && forge build
 
           BASELINE="${{ inputs.baseline-path }}"
           # Use upgrades-path for fallback to avoid path resolution issues when baseline dir doesn't exist
           FALLBACK="${{ inputs.upgrades-path }}/previous"
 
+          # Determine which baseline directory to use
           if [ -d "$BASELINE" ] && ls ${BASELINE}/*.sol 1> /dev/null 2>&1; then
-            echo "Baseline contracts found in $BASELINE, running upgrade validation..."
-            forge script ${{ inputs.validation-script }} -vvv
+            BASELINE_DIR="$BASELINE"
           elif [ -d "$FALLBACK" ] && ls ${FALLBACK}/*.sol 1> /dev/null 2>&1; then
-            echo "Baseline contracts found in $FALLBACK (fallback path), running upgrade validation..."
-            forge script ${{ inputs.validation-script }} -vvv
+            BASELINE_DIR="$FALLBACK"
           else
             echo "::warning::Baseline missing — will auto-init on first merge to main"
             echo "No baseline contracts found, skipping upgrade validation (initial deployment)"
+            exit 0
           fi
+
+          echo "Using baseline directory: $BASELINE_DIR"
+          FAILED=0
+
+          # Validate each contract in the baseline
+          for baseline_file in ${BASELINE_DIR}/*.sol; do
+            CONTRACT_NAME=$(basename "$baseline_file" .sol)
+
+            # Find the current source file
+            CURRENT_FILE=$(find src -name "${CONTRACT_NAME}.sol" -type f 2>/dev/null | head -1)
+            if [[ -z "$CURRENT_FILE" ]]; then
+              echo "::warning::No current source found for $CONTRACT_NAME, skipping"
+              continue
+            fi
+
+            # Derive reference contract path (relative to out/)
+            BASELINE_RELATIVE="${BASELINE_DIR}/${CONTRACT_NAME}.sol"
+
+            echo "Validating upgrade: ${CURRENT_FILE}:${CONTRACT_NAME} <- ${BASELINE_RELATIVE}:${CONTRACT_NAME}"
+
+            if npx @openzeppelin/upgrades-core@^1.37.0 validate out/build-info \
+              --contract "${CURRENT_FILE}:${CONTRACT_NAME}" \
+              --reference "${BASELINE_RELATIVE}:${CONTRACT_NAME}" \
+              --requireReference; then
+              echo "✓ ${CONTRACT_NAME} upgrade is safe"
+            else
+              echo "::error::${CONTRACT_NAME} upgrade validation failed"
+              FAILED=1
+            fi
+          done
+
+          if [[ $FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed upgrade safety validation"
+            exit 1
+          fi
+
+          echo "All contracts passed upgrade safety validation"
 
   deploy-testnet:
     name: Deploy Testnet
