@@ -1,176 +1,66 @@
-<img src="https://raw.githubusercontent.com/defi-wonderland/brand/v1.0.0/external/solidity-foundry-boilerplate-banner.png" alt="wonderland banner" align="center" />
-<br />
+## Foundry
 
-<div align="center"><strong>Start your next Solidity project with Foundry in seconds</strong></div>
-<div align="center">A highly scalable foundation focused on DX and best practices</div>
+**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
-<br />
+Foundry consists of:
 
-## Features
+- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
+- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
+- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
 
-<dl>
-  <dt>Sample contracts</dt>
-  <dd>Basic Greeter contract with an external interface.</dd>
+## Documentation
 
-  <dt>Foundry setup</dt>
-  <dd>Foundry configuration with multiple custom profiles and remappings.</dd>
+https://book.getfoundry.sh/
 
-  <dt>Deployment scripts</dt>
-  <dd>Sample scripts to deploy contracts on both mainnet and testnet.</dd>
+## Usage
 
-  <dt>Sample Integration, Unit, Property-based fuzzed and symbolic tests</dt>
-  <dd>Example tests showcasing mocking, assertions and configuration for mainnet forking. As well it includes everything needed in order to check code coverage.</dd>
-  <dd>Unit tests are built based on the <a href="https://twitter.com/PaulRBerg/status/1682346315806539776">Branched-Tree Technique</a>, using <a href="https://github.com/alexfertel/bulloak">Bulloak</a>.
+### Build
 
-  <dt>Linter</dt>
-  <dd>Simple and fast solidity linting thanks to forge fmt.</dd>
-  <dd>Find missing natspec automatically.</dd>
-
-  <dt>Github workflows CI</dt>
-  <dd>Run all tests and see the coverage as you push your changes.</dd>
-  <dd>Export your Solidity interfaces and contracts as packages, and publish them to NPM.</dd>
-</dl>
-
-## Setup
-
-1. Install Foundry by following the instructions from [their repository](https://github.com/foundry-rs/foundry#installation).
-2. Copy the `.env.example` file to `.env` and fill in the variables.
-3. Install rust dependencies with [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html):
-   1. `cargo install lintspec`
-   2. `cargo install bulloak`
-4. Install the dependencies by running: `yarn install`. In case there is an error with the commands, run `foundryup` and try them again.
-
-## Build
-
-The default way to build the code is suboptimal but fast, you can run it via:
-
-```bash
-yarn build
+```shell
+$ forge build
 ```
 
-In order to build a more optimized code ([via IR](https://docs.soliditylang.org/en/v0.8.15/ir-breaking-changes.html#solidity-ir-based-codegen-changes)), run:
+### Test
 
-```bash
-yarn build:optimized
+```shell
+$ forge test
 ```
 
-## Running tests
+### Format
 
-Unit tests should be isolated from any externalities, while Integration usually run in a fork of the blockchain. In this boilerplate you will find example of both.
-
-In order to run both unit and integration tests, run:
-
-```bash
-yarn test
+```shell
+$ forge fmt
 ```
 
-In order to just run unit tests, run:
+### Gas Snapshots
 
-```bash
-yarn test:unit
+```shell
+$ forge snapshot
 ```
 
-In order to run unit tests and run way more fuzzing than usual (5x), run:
+### Anvil
 
-```bash
-yarn test:unit:deep
+```shell
+$ anvil
 ```
 
-In order to just run integration tests, run:
+### Deploy
 
-```bash
-yarn test:integration
+```shell
+$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
 ```
 
-In order to check your current code coverage, run:
+### Cast
 
-```bash
-yarn coverage
+```shell
+$ cast <subcommand>
 ```
 
-In order to create a new `.t.sol` file from a `.tree` bulloak file, run:
+### Help
 
-```bash
-yarn test:bulloak:scaffold
+```shell
+$ forge --help
+$ anvil --help
+$ cast --help
 ```
-
-In order to fix or add missing tests to a `.t.sol` file after changing a `.tree` bulloak file, run:
-
-```bash
-yarn test:bulloak:fix
-```
-
-<br>
-
-## Deploy & verify
-
-### Setup
-
-Configure the `.env` variables and source them:
-
-```bash
-source .env
-```
-
-Import your private keys into Foundry's encrypted keystore:
-
-```bash
-cast wallet import $MAINNET_DEPLOYER_NAME --interactive
-```
-
-```bash
-cast wallet import $SEPOLIA_DEPLOYER_NAME --interactive
-```
-
-### Sepolia
-
-```bash
-yarn deploy:sepolia
-```
-
-### Mainnet
-
-```bash
-yarn deploy:mainnet
-```
-
-The deployments are stored in ./broadcast
-
-See the [Foundry Book for available options](https://book.getfoundry.sh/reference/forge/forge-create.html).
-
-## Export And Publish
-
-Export TypeScript interfaces from Solidity contracts and interfaces providing compatibility with TypeChain. Publish the exported packages to NPM.
-
-To enable this feature, make sure you've set the `NPM_TOKEN` on your org's secrets. Then set the job's conditional to `true`:
-
-```yaml
-jobs:
-  export:
-    name: Generate Interfaces And Contracts
-    # Remove the following line if you wish to export your Solidity contracts and interfaces and publish them to NPM
-    if: true
-    ...
-```
-
-Also, remember to update the `package_name` param to your package name:
-
-```yaml
-- name: Export Solidity - ${{ matrix.export_type }}
-  uses: defi-wonderland/solidity-exporter-action@1dbf5371c260add4a354e7a8d3467e5d3b9580b8
-  with:
-    # Update package_name with your package name
-    package_name: "my-cool-project"
-    ...
-
-
-- name: Publish to NPM - ${{ matrix.export_type }}
-  # Update `my-cool-project` with your package name
-  run: cd export/my-cool-project-${{ matrix.export_type }} && npm publish --access public
-  ...
-```
-
-You can take a look at our [solidity-exporter-action](https://github.com/defi-wonderland/solidity-exporter-action) repository for more information and usage examples.
-
-## Licensing
-The primary license for the boilerplate is MIT, see [`LICENSE`](https://github.com/defi-wonderland/solidity-foundry-boilerplate/blob/main/LICENSE)
