@@ -37,17 +37,7 @@ To make workflows reusable across repos, CI expects a **canonical wrapper**:
     -vvvv
   ```
 
-**Env mapping (CI):** the workflow must export `PRIVATE_KEY` and `RPC_URL` from the environment-specific secrets. For multi-mainnet deployments, each network has its own secret set:
-
-| Network | Private Key Secret | RPC URL Secret |
-|---------|-------------------|----------------|
-| Testnet | `TESTNET_PRIVATE_KEY` | `TESTNET_RPC_URL` |
-| Ethereum Mainnet | `MAINNET_PRIVATE_KEY` | `MAINNET_RPC_URL` |
-| Arbitrum | `ARBITRUM_PRIVATE_KEY` | `ARBITRUM_RPC_URL` |
-| Base | `BASE_PRIVATE_KEY` | `BASE_RPC_URL` |
-| *(additional networks)* | `{NETWORK}_PRIVATE_KEY` | `{NETWORK}_RPC_URL` |
-
-The naming convention is `{NETWORK_NAME}_PRIVATE_KEY` and `{NETWORK_NAME}_RPC_URL` where `NETWORK_NAME` is uppercase (e.g., `ARBITRUM`, `BASE`, `OPTIMISM`).
+**Env mapping (CI):** The workflow exports `PRIVATE_KEY` and `RPC_URL` from environment-specific secrets. Each GitHub Environment contains these two secrets for its network.
 
 **Deployment artifact schema (output)** CI will parse the Foundry broadcast artifact to extract deployed addresses.
 
@@ -59,7 +49,7 @@ The naming convention is `{NETWORK_NAME}_PRIVATE_KEY` and `{NETWORK_NAME}_RPC_UR
   }
   ```
 
-This is the output written to `deployments/{network}/deployment.json`, derived by parsing Foundry's `broadcast/**/run-latest.json`. For multi-mainnet deployments, each network gets its own artifact file (e.g., `deployments/ethereum/deployment.json`, `deployments/arbitrum/deployment.json`, `deployments/base/deployment.json`).
+This is the output written to `deployments/{network}/deployment.json`, derived by parsing Foundry's `broadcast/**/run-latest.json`. Each configured network gets its own artifact file.
 
 * **Deploy script (example):**
 
@@ -161,10 +151,10 @@ Repositories can configure deployment to multiple mainnet networks. Each network
 
 **Execution behavior:**
 
-- **PR to `main` (testnet):** Deploys to all configured testnets in parallel, **but only after the PR is approved**. The testnet deployment job is a required status check that blocks merging.
+- **PR to `main` (testnet):** Deploys to configured testnet(s), **but only after the PR is approved**. The testnet deployment job is a required status check that blocks merging.
 - **Push to `main` (mainnet):** Deploys to all configured mainnets. Each mainnet deployment:
   - Runs in its own GitHub Environment (with optional manual approval per environment)
-  - Uses network-specific secrets (`{NETWORK}_PRIVATE_KEY`, `{NETWORK}_RPC_URL`)
+  - Uses environment secrets (`PRIVATE_KEY`, `RPC_URL`)
   - Writes artifacts to `deployments/{network}/deployment.json`
   - Verifies on the network's Blockscout instance
 - **Job independence:** Each network deployment is an independent job. A failure on one network does not block other networks (configurable via `fail-fast: false`).
@@ -172,33 +162,13 @@ Repositories can configure deployment to multiple mainnet networks. Each network
 
 **Secrets per environment:**
 
-Each GitHub Environment (e.g., `production-ethereum`, `production-arbitrum`) must contain:
+Each GitHub Environment must contain:
 - `PRIVATE_KEY` — Deployer wallet private key for that network
 - `RPC_URL` — RPC endpoint URL for that network
 
-**Artifact structure (multi-mainnet):**
-
-```
-deployments/
-├── testnet/
-│   └── deployment.json
-├── ethereum/
-│   └── deployment.json
-├── arbitrum/
-│   └── deployment.json
-└── base/
-    └── deployment.json
-```
-
 **Step Summary (multi-mainnet):**
 
-The GitHub Actions Step Summary will include a combined table showing deployment status across all networks:
-
-| Network | Status | Contract | Address | Explorer |
-|---------|--------|----------|---------|----------|
-| Ethereum | ✅ | Greeter_Proxy | 0x123... | [View](https://eth.blockscout.com/address/0x123) |
-| Arbitrum | ✅ | Greeter_Proxy | 0x456... | [View](https://arbitrum.blockscout.com/address/0x456) |
-| Base | ⏳ Pending | — | — | — |
+The GitHub Actions Step Summary includes a table showing deployment status across all configured networks, with contract addresses and explorer links.
 
 ### Stakeholders
 
@@ -212,7 +182,7 @@ The GitHub Actions Step Summary will include a combined table showing deployment
 ### Goals & Success Stories
 
 * **On every PR to `main`:** build, test, upgrade-safety validate. **After PR approval**, deploy to **testnet(s)**, verify on **Blockscout**, publish addresses + explorer links in **PR comment** and **Step Summary**, and upload **deployment artifacts**. The testnet deployment is a **required status check** — merging is blocked until testnet deployment succeeds.
-* **On merge/push to `main`:** run the same pipeline against **configured mainnet(s)** (e.g., Ethereum, Arbitrum, Base) under protected environment(s). Each network deployment runs as a separate job with its own GitHub Environment. The job must not change any production proxy's implementation. It deploys new implementations only. All production upgrades remain manual and explicit.
+* **On merge/push to `main`:** run the same pipeline against **configured mainnet(s)** under protected environment(s). Each network deployment runs as a separate job with its own GitHub Environment. The job must not change any production proxy's implementation. It deploys new implementations only. All production upgrades remain manual and explicit.
 * **Upgrade-safety validation** runs on every pull request. Snapshot formatting & tracking (flatten → baseline) happens only after a push to `main`.
 * **Repeatability & Reusability:** all CI/CD steps are packaged into a reusable composite GitHub Action. Repos only need thin YAML wrappers that call this action with network/environment inputs.
 * **Artifact schema:** every deployment emits one JSON containing, per contract:`sourcePathAndName`, `address`.
@@ -362,7 +332,7 @@ The testnet deployment job (`deploy-testnet`) is configured as a **required stat
 1. **CI triggers** on `push` to `main`.
 2. Same steps 2–3 as Path A (build, test, upgrade-safety) — runs once, shared across all networks.
 3. **For each configured mainnet** (read from `.github/deploy-networks.json`):
-   - **Create a deployment job** that runs in the network's GitHub Environment (e.g., `production-ethereum`, `production-arbitrum`).
+   - **Create a deployment job** that runs in the network's GitHub Environment.
    - **Deploy (implementation-only)** via `forge script` (entry: `script/Deploy.s.sol:Deploy`) to deploy a new implementation contract on that mainnet. Do not deploy/upgrade any proxy and do not modify ProxyAdmin. Output the implementation address only.
    - **Parse broadcast artifact** (`run-latest.json`) for addresses, **verify on Blockscout** (network-specific instance), **summarize**, and write `deployments/{network}/deployment.json` with `{ sourcePathAndName, address }` per contract.
 4. **Aggregate results** in Step Summary showing deployment status across all networks.
@@ -516,7 +486,7 @@ stateDiagram-v2
 
 * **Deployment artifacts** — Canonical JSON stored under `deployments/{network}/deployment.json` with per-contract metadata used by frontends.
 
-* **GitHub Environments** — Protected contexts (e.g., `testnet`, `production-ethereum`, `production-arbitrum`, `production-base`) holding secrets (RPC URLs, private keys) and optional manual approvals. Each mainnet network has its own environment.
+* **GitHub Environments** — Protected contexts holding secrets (RPC URLs, private keys) and optional manual approvals. Each network has its own environment (e.g., `testnet`, `production-{network}`).
 
 * **Network Configuration** — JSON file at `.github/deploy-networks.json` defining testnet and mainnet targets. Each entry specifies network name, chain ID, Blockscout URL, and GitHub Environment name.
 
