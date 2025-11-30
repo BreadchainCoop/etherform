@@ -195,10 +195,19 @@ jobs:
           while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
-            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            # Find source file to create fully qualified name (disambiguates from lib/ contracts)
+            SOURCE_FILE=$(find src script -name "${CONTRACT_NAME}.sol" -type f 2>/dev/null | head -1)
+            if [[ -n "$SOURCE_FILE" ]]; then
+              FULL_CONTRACT="${SOURCE_FILE}:${CONTRACT_NAME}"
+            else
+              FULL_CONTRACT="$CONTRACT_NAME"
+            fi
+
+            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR (using $FULL_CONTRACT)..."
             VERIFIED=0
             for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
+              if forge verify-contract "$CONTRACT_ADDR" "$FULL_CONTRACT" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
                 --rpc-url "$RPC_URL" \
@@ -309,10 +318,19 @@ jobs:
           while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
-            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            # Find source file to create fully qualified name (disambiguates from lib/ contracts)
+            SOURCE_FILE=$(find src script -name "${CONTRACT_NAME}.sol" -type f 2>/dev/null | head -1)
+            if [[ -n "$SOURCE_FILE" ]]; then
+              FULL_CONTRACT="${SOURCE_FILE}:${CONTRACT_NAME}"
+            else
+              FULL_CONTRACT="$CONTRACT_NAME"
+            fi
+
+            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR (using $FULL_CONTRACT)..."
             VERIFIED=0
             for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
+              if forge verify-contract "$CONTRACT_ADDR" "$FULL_CONTRACT" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
                 --rpc-url "$RPC_URL" \
