@@ -433,11 +433,15 @@ jobs:
   flatten-snapshots:
     name: Flatten Snapshots
     runs-on: ubuntu-latest
-    needs: [deploy-mainnet]
+    needs: [ci, upgrade-safety, deploy-mainnet]
     if: |
       always() &&
-      needs.deploy-mainnet.result == 'success' &&
-      inputs.flatten-contracts
+      needs.ci.result == 'success' &&
+      (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
+      (needs.deploy-mainnet.result == 'success' || needs.deploy-mainnet.result == 'skipped') &&
+      inputs.flatten-contracts &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
