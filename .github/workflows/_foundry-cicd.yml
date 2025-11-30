@@ -368,61 +368,6 @@ jobs:
           # Post comment to PR
           gh pr comment ${{ github.event.pull_request.number }} --body-file pr-comment.md
 
-      - name: Create testnet pre-release
-        if: inputs.create-release && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-          NETWORK_NAME: ${{ steps.network.outputs.network_name }}
-        run: |
-          set -euo pipefail
-
-          SHORT_SHA="${{ github.event.pull_request.head.sha }}"
-          SHORT_SHA="${SHORT_SHA:0:7}"
-          TAG="${{ inputs.release-prefix }}testnet-${SHORT_SHA}"
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          PR_NUM="${{ github.event.pull_request.number }}"
-          PR_TITLE="${{ github.event.pull_request.title }}"
-
-          # Build release body
-          cat > release-notes.md << EOF
-          ## Testnet Deployment
-
-          **Network:** ${NETWORK_NAME}
-          **Date:** ${DATE}
-          **PR:** [#${PR_NUM}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${PR_NUM}) - ${PR_TITLE}
-          **Commit:** [\`${SHORT_SHA}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${{ github.event.pull_request.head.sha }})
-
-          ### Deployed Contracts
-
-          | Contract | Address | Explorer |
-          |----------|---------|----------|
-          EOF
-
-          # Add contract rows
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| ${CONTRACT} | \`${ADDRESS}\` | [View](${BLOCKSCOUT_URL}/address/${ADDRESS}) |" >> release-notes.md
-          done < deployment-summary.txt
-
-          # Add transaction details
-          echo "" >> release-notes.md
-          echo "### Deployment Transactions" >> release-notes.md
-          echo "" >> release-notes.md
-          echo "| Contract | Transaction |" >> release-notes.md
-          echo "|----------|-------------|" >> release-notes.md
-          jq -r '.transactions[] | select(.transactionType == "CREATE") | "| \(.contractName) | [\(.hash)]('"${BLOCKSCOUT_URL}"'/tx/\(.hash)) |"' "$BROADCAST_FILE" >> release-notes.md
-
-          # Create pre-release
-          gh release create "$TAG" \
-            --title "Testnet Deployment - PR #${PR_NUM}" \
-            --notes-file release-notes.md \
-            --prerelease
-
-          echo "::notice::Created pre-release $TAG"
-
   deploy-mainnet:
     name: Deploy Mainnet
     runs-on: ubuntu-latest
