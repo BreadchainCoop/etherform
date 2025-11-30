@@ -108,6 +108,39 @@ jobs:
       - name: Show Forge version
         run: forge --version
 
+      - name: Validate compiler config
+        run: |
+          set -euo pipefail
+
+          ERRORS=0
+
+          # Check bytecode_hash = "none"
+          if grep -q 'bytecode_hash\s*=\s*"none"' foundry.toml; then
+            echo "✓ bytecode_hash = \"none\""
+          else
+            echo "::error::foundry.toml must set bytecode_hash = \"none\" for deterministic bytecode"
+            ERRORS=1
+          fi
+
+          # Check cbor_metadata = false
+          if grep -q 'cbor_metadata\s*=\s*false' foundry.toml; then
+            echo "✓ cbor_metadata = false"
+          else
+            echo "::error::foundry.toml must set cbor_metadata = false for deterministic bytecode"
+            ERRORS=1
+          fi
+
+          if [[ $ERRORS -eq 1 ]]; then
+            echo ""
+            echo "Required foundry.toml settings for CI/CD:"
+            echo "  [profile.default]"
+            echo "  bytecode_hash = \"none\""
+            echo "  cbor_metadata = false"
+            exit 1
+          fi
+
+          echo "Compiler config validated successfully"
+
       - name: Check formatting
         if: inputs.check-formatting
         run: forge fmt --check
