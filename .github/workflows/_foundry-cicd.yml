@@ -186,30 +186,44 @@ jobs:
       - name: Verify contracts on Blockscout
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          RPC_URL: ${{ secrets.RPC_URL }}
         run: |
+          set -euo pipefail
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+          FAILED=0
+
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+            VERIFIED=0
             for attempt in 1 2 3; do
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
+                --rpc-url "$RPC_URL" \
                 --guess-constructor-args \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=1
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
                 fi
               fi
             done
-          done
+            if [[ $VERIFIED -eq 0 ]]; then
+              echo "::error::Failed to verify $CONTRACT_NAME after 3 attempts"
+              FAILED=1
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ $FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Create deployment summary
         env:
@@ -286,30 +300,44 @@ jobs:
       - name: Verify contracts on Blockscout
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          RPC_URL: ${{ secrets.RPC_URL }}
         run: |
+          set -euo pipefail
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+          FAILED=0
+
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+            VERIFIED=0
             for attempt in 1 2 3; do
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
+                --rpc-url "$RPC_URL" \
                 --guess-constructor-args \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=1
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
                 fi
               fi
             done
-          done
+            if [[ $VERIFIED -eq 0 ]]; then
+              echo "::error::Failed to verify $CONTRACT_NAME after 3 attempts"
+              FAILED=1
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ $FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Create deployment summary
         env:
