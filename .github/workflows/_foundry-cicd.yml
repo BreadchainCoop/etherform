@@ -107,17 +107,17 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Run upgrade safety validation
+        env:
+          BASELINE_PATH: ${{ inputs.baseline-path }}
+          UPGRADES_PATH: ${{ inputs.upgrades-path }}
         run: |
           set -euo pipefail
-          forge clean && forge build
-
-          BASELINE="${{ inputs.baseline-path }}"
-          # Use upgrades-path for fallback to avoid path resolution issues when baseline dir doesn't exist
-          FALLBACK="${{ inputs.upgrades-path }}/previous"
 
           # Determine which baseline directory to use
-          if [ -d "$BASELINE" ] && ls ${BASELINE}/*.sol 1> /dev/null 2>&1; then
-            BASELINE_DIR="$BASELINE"
+          FALLBACK="${UPGRADES_PATH}/previous"
+
+          if [ -d "$BASELINE_PATH" ] && ls ${BASELINE_PATH}/*.sol 1> /dev/null 2>&1; then
+            BASELINE_DIR="$BASELINE_PATH"
           elif [ -d "$FALLBACK" ] && ls ${FALLBACK}/*.sol 1> /dev/null 2>&1; then
             BASELINE_DIR="$FALLBACK"
           else
@@ -127,6 +127,28 @@ jobs:
           fi
 
           echo "Using baseline directory: $BASELINE_DIR"
+
+          # Generate validation script dynamically
+          mkdir -p script/generated
+          cat > script/generated/ValidateUpgrades.s.sol << 'SOLEOF'
+          // SPDX-License-Identifier: MIT
+          pragma solidity ^0.8.13;
+
+          import {Script} from "forge-std/Script.sol";
+          import {Options} from "openzeppelin-foundry-upgrades/Options.sol";
+          import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
+
+          contract ValidateUpgrades is Script {
+              function run(string calldata currentContract, string calldata referenceContract) external {
+                  Options memory opts;
+                  opts.referenceContract = referenceContract;
+                  Upgrades.validateUpgrade(currentContract, opts);
+              }
+          }
+          SOLEOF
+
+          forge build
+
           FAILED=0
 
           # Validate each contract in the baseline
@@ -140,21 +162,23 @@ jobs:
               continue
             fi
 
-            # Derive reference contract path (relative to out/)
-            BASELINE_RELATIVE="${BASELINE_DIR}/${CONTRACT_NAME}.sol"
+            CURRENT_CONTRACT="${CURRENT_FILE}:${CONTRACT_NAME}"
+            REFERENCE_CONTRACT="${BASELINE_DIR}/${CONTRACT_NAME}.sol:${CONTRACT_NAME}"
 
-            echo "Validating upgrade: ${CURRENT_FILE}:${CONTRACT_NAME} <- ${BASELINE_RELATIVE}:${CONTRACT_NAME}"
+            echo "Validating upgrade: $CURRENT_CONTRACT <- $REFERENCE_CONTRACT"
 
-            if npx @openzeppelin/upgrades-core@^1.37.0 validate out/build-info \
-              --contract "${CURRENT_FILE}:${CONTRACT_NAME}" \
-              --reference "${BASELINE_RELATIVE}:${CONTRACT_NAME}" \
-              --requireReference; then
+            if forge script script/generated/ValidateUpgrades.s.sol \
+              --sig "run(string,string)" "$CURRENT_CONTRACT" "$REFERENCE_CONTRACT" \
+              -vvv; then
               echo "✓ ${CONTRACT_NAME} upgrade is safe"
             else
               echo "::error::${CONTRACT_NAME} upgrade validation failed"
               FAILED=1
             fi
           done
+
+          # Cleanup generated script
+          rm -rf script/generated
 
           if [[ $FAILED -eq 1 ]]; then
             echo "::error::One or more contracts failed upgrade safety validation"
