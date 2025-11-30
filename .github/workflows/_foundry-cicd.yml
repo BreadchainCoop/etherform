@@ -115,7 +115,8 @@ jobs:
           forge clean && forge build
 
           BASELINE="${{ inputs.baseline-path }}"
-          FALLBACK="${{ inputs.baseline-path }}/../previous"
+          # Use upgrades-path for fallback to avoid path resolution issues when baseline dir doesn't exist
+          FALLBACK="${{ inputs.upgrades-path }}/previous"
 
           if [ -d "$BASELINE" ] && ls ${BASELINE}/*.sol 1> /dev/null 2>&1; then
             echo "Baseline contracts found in $BASELINE, running upgrade validation..."
