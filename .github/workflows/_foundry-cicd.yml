@@ -210,10 +210,15 @@ jobs:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+          VERIFICATION_FAILED=false
+
+          # Use process substitution to avoid subshell issues with variable tracking
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            VERIFIED=false
             for attempt in 1 2 3; do
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
@@ -221,17 +226,26 @@ jobs:
                 --guess-constructor-args \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=true
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
                 fi
               fi
             done
-          done
+
+            if [[ "$VERIFIED" == "false" ]]; then
+              echo "✗ Failed to verify $CONTRACT_NAME after 3 attempts"
+              VERIFICATION_FAILED=true
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ "$VERIFICATION_FAILED" == "true" ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Create deployment summary
         env:
@@ -313,10 +327,15 @@ jobs:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+          VERIFICATION_FAILED=false
+
+          # Use process substitution to avoid subshell issues with variable tracking
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            VERIFIED=false
             for attempt in 1 2 3; do
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
@@ -324,17 +343,26 @@ jobs:
                 --guess-constructor-args \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=true
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
                 fi
               fi
             done
-          done
+
+            if [[ "$VERIFIED" == "false" ]]; then
+              echo "✗ Failed to verify $CONTRACT_NAME after 3 attempts"
+              VERIFICATION_FAILED=true
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ "$VERIFICATION_FAILED" == "true" ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Create deployment summary
         env:
