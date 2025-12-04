@@ -299,6 +299,27 @@ jobs:
           echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
+      - name: Create deployment artifact
+        run: |
+          set -euo pipefail
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          mkdir -p deployments/testnet
+
+          # Create deployment.json with spec schema
+          jq '[.transactions[] | select(.transactionType == "CREATE") | {
+            sourcePathAndName: "src/\(.contractName).sol:\(.contractName)",
+            address: .contractAddress
+          }]' "$BROADCAST_FILE" | jq '{contracts: .}' > deployments/testnet/deployment.json
+
+          echo "Created deployments/testnet/deployment.json:"
+          cat deployments/testnet/deployment.json
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-testnet
+          path: deployments/testnet/deployment.json
+
       - name: Verify contracts on Blockscout
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
@@ -464,6 +485,31 @@ jobs:
           fi
           echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
+
+      - name: Create deployment artifact
+        env:
+          NETWORK_NAME: ${{ inputs.mainnet-name }}
+        run: |
+          set -euo pipefail
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          NETWORK_DIR=$(echo "$NETWORK_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+          mkdir -p "deployments/${NETWORK_DIR}"
+
+          # Create deployment.json with spec schema
+          jq '[.transactions[] | select(.transactionType == "CREATE") | {
+            sourcePathAndName: "src/\(.contractName).sol:\(.contractName)",
+            address: .contractAddress
+          }]' "$BROADCAST_FILE" | jq '{contracts: .}' > "deployments/${NETWORK_DIR}/deployment.json"
+
+          echo "Created deployments/${NETWORK_DIR}/deployment.json:"
+          cat "deployments/${NETWORK_DIR}/deployment.json"
+          echo "artifact_path=deployments/${NETWORK_DIR}/deployment.json" >> $GITHUB_OUTPUT
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-mainnet
+          path: deployments/*/deployment.json
 
       - name: Verify contracts on Blockscout
         env:
