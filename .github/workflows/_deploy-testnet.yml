@@ -5,6 +5,10 @@ name: Deploy Testnet (Reusable)
 on:
   workflow_call:
     inputs:
+      deployment-foundry-profile:
+        description: 'Foundry profile to use for deployment (must be defined in foundry.toml)'
+        type: string
+        default: ''
       deploy-script:
         description: 'Path to deployment script'
         type: string
@@ -31,6 +35,8 @@ jobs:
   deploy-testnet:
     name: Deploy to Testnet
     runs-on: ubuntu-latest
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     outputs:
       network_name: ${{ steps.network.outputs.network_name }}
       blockscout_url: ${{ steps.network.outputs.blockscout_url }}
