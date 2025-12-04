@@ -90,6 +90,7 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
+        if: steps.network.outputs.blockscout_url != ''
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
         run: |

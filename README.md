@@ -76,6 +76,8 @@ Create `.github/deploy-networks.json` in your repository:
 }
 ```
 
+**Note:** Contract verification on Blockscout is optional. If `blockscout_url` is omitted or empty for a network, verification is skipped.
+
 ### Secrets Required
 
 | Secret | Description |
