@@ -83,12 +83,41 @@ Create `.github/deploy-networks.json` in your repository:
 | `PRIVATE_KEY` | Deployer wallet private key |
 | `RPC_URL` | Network RPC endpoint |
 
+## Deployment Profiles
+
+Use `deployment-foundry-profile` to specify a Foundry profile for deployments while keeping CI tests on the default profile. This is useful when tests fail with high optimizer settings but production needs maximum optimization.
+
+```yaml
+jobs:
+  deploy:
+    uses: BreadchainCoop/etherform/.github/workflows/_deploy-mainnet.yml@main
+    with:
+      deployment-foundry-profile: 'production'
+    secrets:
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+      RPC_URL: ${{ secrets.RPC_URL }}
+```
+
+Define profiles in your `foundry.toml`:
+
+```toml
+[profile.default]
+optimizer = false
+
+[profile.production]
+optimizer = true
+optimizer_runs = 1000000
+```
+
+The profile applies to deployment, upgrade safety, verification, and flattening steps. CI tests run with the default profile.
+
 ## Workflow Inputs
 
 ### `_ci.yml`
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
+| `deployment-foundry-profile` | string | `''` | Foundry profile (optional, for standalone use) |
 | `check-formatting` | boolean | `true` | Run `forge fmt --check` |
 | `test-verbosity` | string | `'vvv'` | Test verbosity (`v`, `vv`, `vvv`, `vvvv`) |
 
@@ -96,6 +125,7 @@ Create `.github/deploy-networks.json` in your repository:
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
+| `deployment-foundry-profile` | string | `''` | Foundry profile for deployment |
 | `baseline-path` | string | `'test/upgrades/baseline'` | Path to baseline contracts |
 | `fallback-path` | string | `'test/upgrades/previous'` | Fallback path if baseline missing |
 | `validation-script` | string | `'script/upgrades/ValidateUpgrade.s.sol'` | Validation script path |
@@ -104,6 +134,7 @@ Create `.github/deploy-networks.json` in your repository:
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
+| `deployment-foundry-profile` | string | `''` | Foundry profile for deployment |
 | `deploy-script` | string | `'script/Deploy.s.sol:Deploy'` | Deployment script |
 | `network-config-path` | string | `'.github/deploy-networks.json'` | Network config path |
 | `network-index` | number | `0` | Index in testnets array |
@@ -113,6 +144,7 @@ Create `.github/deploy-networks.json` in your repository:
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
+| `deployment-foundry-profile` | string | `''` | Foundry profile for deployment |
 | `deploy-script` | string | `'script/Deploy.s.sol:Deploy'` | Deployment script |
 | `network-config-path` | string | `'.github/deploy-networks.json'` | Network config path |
 | `network` | string | `''` | Specific network (empty = all) |
