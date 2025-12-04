@@ -26,6 +26,8 @@ on:
         required: true
       RPC_URL:
         required: true
+      ADMIN_ADDRESS:
+        required: false
 
 jobs:
   deploy-testnet:
@@ -55,6 +57,7 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          ADMIN_ADDRESS: ${{ secrets.ADMIN_ADDRESS }}
         run: |
           # Ensure PRIVATE_KEY has 0x prefix
           if [[ "$PRIVATE_KEY" != 0x* ]]; then

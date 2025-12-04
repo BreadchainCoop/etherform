@@ -37,6 +37,8 @@ on:
       GH_TOKEN:
         description: 'GitHub token for pushing commits (defaults to GITHUB_TOKEN)'
         required: false
+      ADMIN_ADDRESS:
+        required: false
 
 jobs:
   read-config:
@@ -81,6 +83,7 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          ADMIN_ADDRESS: ${{ secrets.ADMIN_ADDRESS }}
         run: |
           # Ensure PRIVATE_KEY has 0x prefix
           if [[ "$PRIVATE_KEY" != 0x* ]]; then

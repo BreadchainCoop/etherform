@@ -69,6 +69,9 @@ on:
       GH_TOKEN:
         description: 'GitHub token for pushing commits'
         required: false
+      ADMIN_ADDRESS:
+        description: 'Admin address for contract initialization'
+        required: false
 
 jobs:
   ci:
@@ -159,6 +162,7 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          ADMIN_ADDRESS: ${{ secrets.ADMIN_ADDRESS }}
         run: |
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
             export PRIVATE_KEY="0x$PRIVATE_KEY"
@@ -259,6 +263,7 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          ADMIN_ADDRESS: ${{ secrets.ADMIN_ADDRESS }}
         run: |
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
             export PRIVATE_KEY="0x$PRIVATE_KEY"
