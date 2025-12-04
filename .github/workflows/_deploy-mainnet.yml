@@ -119,7 +119,6 @@ jobs:
         if: matrix.blockscout_url != ''
         env:
           BLOCKSCOUT_URL: ${{ matrix.blockscout_url }}
-          RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
           VERIFICATION_FAILED=false
@@ -129,8 +128,27 @@ jobs:
           while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
+            ARGS=$(echo "$tx" | jq -c '.arguments // empty')
 
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            # Build constructor args if present
+            CONSTRUCTOR_ARGS_FLAG=""
+            if [[ -n "$ARGS" && "$ARGS" != "null" && "$ARGS" != "[]" ]]; then
+              # Get constructor signature from compiled contract ABI
+              CONSTRUCTOR_SIG=$(forge inspect "$CONTRACT_NAME" abi 2>/dev/null | jq -r '.[] | select(.type == "constructor") | .inputs | map(.type) | join(",")')
+
+              if [[ -n "$CONSTRUCTOR_SIG" ]]; then
+                # Convert JSON array to space-separated args for cast
+                ARGS_LIST=$(echo "$ARGS" | jq -r '.[]' | tr '\n' ' ')
+                ENCODED_ARGS=$(cast abi-encode "constructor($CONSTRUCTOR_SIG)" $ARGS_LIST 2>/dev/null) || true
+
+                if [[ -n "$ENCODED_ARGS" ]]; then
+                  CONSTRUCTOR_ARGS_FLAG="--constructor-args $ENCODED_ARGS"
+                  echo "  Constructor args encoded: $ENCODED_ARGS"
+                fi
+              fi
+            fi
 
             # Retry up to 3 times with exponential backoff
             VERIFIED=false
@@ -138,8 +156,7 @@ jobs:
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --rpc-url "$RPC_URL" \
-                --guess-constructor-args \
+                $CONSTRUCTOR_ARGS_FLAG \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
                 VERIFIED=true
