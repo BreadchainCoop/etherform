@@ -147,16 +147,60 @@ jobs:
             echo "No baseline contracts found, skipping upgrade validation (initial deployment)"
           fi
 
+  read-testnet-config:
+    name: Read Testnet Config
+    runs-on: ubuntu-latest
+    if: inputs.deploy-on-pr && github.event_name == 'pull_request'
+    outputs:
+      blockscout_url: ${{ steps.network.outputs.blockscout_url }}
+      network_name: ${{ steps.network.outputs.network_name }}
+      environment: ${{ steps.network.outputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read network config
+        id: network
+        run: |
+          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' ${{ inputs.network-config-path }})
+          NETWORK_NAME=$(jq -r '.testnets[0].name' ${{ inputs.network-config-path }})
+          ENVIRONMENT=$(jq -r '.testnets[0].environment' ${{ inputs.network-config-path }})
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+  read-mainnet-config:
+    name: Read Mainnet Config
+    runs-on: ubuntu-latest
+    if: inputs.deploy-on-main && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      blockscout_url: ${{ steps.network.outputs.blockscout_url }}
+      network_name: ${{ steps.network.outputs.network_name }}
+      environment: ${{ steps.network.outputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read network config
+        id: network
+        run: |
+          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' ${{ inputs.network-config-path }})
+          NETWORK_NAME=$(jq -r '.mainnets[0].name' ${{ inputs.network-config-path }})
+          ENVIRONMENT=$(jq -r '.mainnets[0].environment' ${{ inputs.network-config-path }})
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
   deploy-testnet:
     name: Deploy Testnet
     runs-on: ubuntu-latest
-    needs: [ci, upgrade-safety]
+    needs: [ci, upgrade-safety, read-testnet-config]
+    environment: ${{ needs.read-testnet-config.outputs.environment }}
     if: |
       always() &&
       needs.ci.result == 'success' &&
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
-      inputs.deploy-on-pr &&
-      github.event_name == 'pull_request'
+      needs.read-testnet-config.result == 'success'
     env:
       FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
@@ -167,14 +211,6 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.testnets[0].name' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
 
       - name: Deploy contracts
         env:
@@ -205,9 +241,9 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
-        if: steps.network.outputs.blockscout_url != ''
+        if: needs.read-testnet-config.outputs.blockscout_url != ''
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-testnet-config.outputs.blockscout_url }}
           RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
@@ -251,7 +287,7 @@ jobs:
 
       - name: Create deployment summary
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-testnet-config.outputs.blockscout_url }}
         run: |
           echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -266,14 +302,13 @@ jobs:
   deploy-mainnet:
     name: Deploy Mainnet
     runs-on: ubuntu-latest
-    needs: [ci, upgrade-safety]
+    needs: [ci, upgrade-safety, read-mainnet-config]
+    environment: ${{ needs.read-mainnet-config.outputs.environment }}
     if: |
       always() &&
       needs.ci.result == 'success' &&
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
-      inputs.deploy-on-main &&
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
+      needs.read-mainnet-config.result == 'success'
     env:
       FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
@@ -284,16 +319,6 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.mainnets[0].name' ${{ inputs.network-config-path }})
-          ENVIRONMENT=$(jq -r '.mainnets[0].environment' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
-          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
 
       - name: Deploy contracts
         env:
@@ -324,9 +349,9 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
-        if: steps.network.outputs.blockscout_url != ''
+        if: needs.read-mainnet-config.outputs.blockscout_url != ''
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-mainnet-config.outputs.blockscout_url }}
           RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
@@ -370,7 +395,7 @@ jobs:
 
       - name: Create deployment summary
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-mainnet-config.outputs.blockscout_url }}
         run: |
           echo "## Mainnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

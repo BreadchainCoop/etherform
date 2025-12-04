@@ -32,14 +32,37 @@ on:
         required: true
 
 jobs:
-  deploy-testnet:
-    name: Deploy to Testnet
+  read-config:
+    name: Read Network Config
     runs-on: ubuntu-latest
-    env:
-      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     outputs:
       network_name: ${{ steps.network.outputs.network_name }}
       blockscout_url: ${{ steps.network.outputs.blockscout_url }}
+      environment: ${{ steps.network.outputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read network config
+        id: network
+        run: |
+          BLOCKSCOUT_URL=$(jq -r '.testnets[${{ inputs.network-index }}].blockscout_url' ${{ inputs.network-config-path }})
+          NETWORK_NAME=$(jq -r '.testnets[${{ inputs.network-index }}].name' ${{ inputs.network-config-path }})
+          ENVIRONMENT=$(jq -r '.testnets[${{ inputs.network-index }}].environment' ${{ inputs.network-config-path }})
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+  deploy-testnet:
+    name: Deploy to Testnet
+    runs-on: ubuntu-latest
+    needs: [read-config]
+    environment: ${{ needs.read-config.outputs.environment }}
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
+    outputs:
+      network_name: ${{ needs.read-config.outputs.network_name }}
+      blockscout_url: ${{ needs.read-config.outputs.blockscout_url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,14 +71,6 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[${{ inputs.network-index }}].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.testnets[${{ inputs.network-index }}].name' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
 
       - name: Deploy contracts
         env:
@@ -90,9 +105,9 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
-        if: steps.network.outputs.blockscout_url != ''
+        if: needs.read-config.outputs.blockscout_url != ''
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-config.outputs.blockscout_url }}
           RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
@@ -140,22 +155,22 @@ jobs:
 
       - name: Save deployment artifacts
         run: |
-          mkdir -p deployments/${{ steps.network.outputs.network_name }}
+          mkdir -p deployments/${{ needs.read-config.outputs.network_name }}
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
 
           # Extract contracts with proper sourcePathAndName format
           jq '{contracts: [.transactions[] | select(.transactionType == "CREATE") | {sourcePathAndName: "src/\(.contractName).sol:\(.contractName)", address: .contractAddress}]}' "$BROADCAST_FILE" \
-            > deployments/${{ steps.network.outputs.network_name }}/deployment.json
+            > deployments/${{ needs.read-config.outputs.network_name }}/deployment.json
 
       - name: Upload deployment artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: deployment-${{ steps.network.outputs.network_name }}
+          name: deployment-${{ needs.read-config.outputs.network_name }}
           path: deployments/
 
       - name: Create deployment summary
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-config.outputs.blockscout_url }}
         run: |
           echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
