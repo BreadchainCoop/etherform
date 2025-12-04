@@ -117,24 +117,33 @@ jobs:
           while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
-            ARGS=$(echo "$tx" | jq -c '.arguments // empty')
 
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
 
             # Build constructor args if present
             CONSTRUCTOR_ARGS_FLAG=""
-            if [[ -n "$ARGS" && "$ARGS" != "null" && "$ARGS" != "[]" ]]; then
+
+            # Check if arguments exist in the transaction
+            if echo "$tx" | jq -e '.arguments | length > 0' >/dev/null 2>&1; then
               # Get constructor signature from compiled contract ABI
-              CONSTRUCTOR_SIG=$(forge inspect "$CONTRACT_NAME" abi 2>/dev/null | jq -r '.[] | select(.type == "constructor") | .inputs | map(.type) | join(",")')
+              ABI_JSON=$(forge inspect "$CONTRACT_NAME" abi 2>/dev/null) || true
 
-              if [[ -n "$CONSTRUCTOR_SIG" ]]; then
-                # Convert JSON array to space-separated args for cast
-                ARGS_LIST=$(echo "$ARGS" | jq -r '.[]' | tr '\n' ' ')
-                ENCODED_ARGS=$(cast abi-encode "constructor($CONSTRUCTOR_SIG)" $ARGS_LIST 2>/dev/null) || true
+              if [[ -n "$ABI_JSON" ]] && echo "$ABI_JSON" | jq -e '.' >/dev/null 2>&1; then
+                CONSTRUCTOR_SIG=$(echo "$ABI_JSON" | jq -r '.[] | select(.type == "constructor") | .inputs | map(.type) | join(",")')
 
-                if [[ -n "$ENCODED_ARGS" ]]; then
-                  CONSTRUCTOR_ARGS_FLAG="--constructor-args $ENCODED_ARGS"
-                  echo "  Constructor args encoded: $ENCODED_ARGS"
+                if [[ -n "$CONSTRUCTOR_SIG" ]]; then
+                  # Build args array for cast - each arg needs to be passed separately
+                  ENCODED_ARGS=""
+                  mapfile -t ARGS_ARRAY < <(echo "$tx" | jq -r '.arguments[]')
+
+                  if [[ ${#ARGS_ARRAY[@]} -gt 0 ]]; then
+                    ENCODED_ARGS=$(cast abi-encode "constructor($CONSTRUCTOR_SIG)" "${ARGS_ARRAY[@]}" 2>/dev/null) || true
+                  fi
+
+                  if [[ -n "$ENCODED_ARGS" ]]; then
+                    CONSTRUCTOR_ARGS_FLAG="--constructor-args $ENCODED_ARGS"
+                    echo "  Constructor args encoded: $ENCODED_ARGS"
+                  fi
                 fi
               fi
             fi
