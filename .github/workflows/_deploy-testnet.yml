@@ -93,6 +93,7 @@ jobs:
         if: steps.network.outputs.blockscout_url != ''
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
           VERIFICATION_FAILED=false
@@ -112,6 +113,7 @@ jobs:
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
+                --rpc-url "$RPC_URL" \
                 --guess-constructor-args \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
