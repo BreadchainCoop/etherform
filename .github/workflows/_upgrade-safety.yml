@@ -5,6 +5,10 @@ name: Upgrade Safety (Reusable)
 on:
   workflow_call:
     inputs:
+      deployment-foundry-profile:
+        description: 'Foundry profile to use for deployment (must be defined in foundry.toml)'
+        type: string
+        default: ''
       baseline-path:
         description: 'Path to baseline contracts for comparison'
         type: string
@@ -22,6 +26,8 @@ jobs:
   upgrade-safety:
     name: Validate Upgrade Safety
     runs-on: ubuntu-latest
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
