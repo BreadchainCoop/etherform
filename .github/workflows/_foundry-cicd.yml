@@ -105,13 +105,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Build paths filter
+        id: paths
+        run: |
+          # Convert newline-separated paths to YAML list format
+          YAML_PATHS=$(echo "${{ inputs.contract-paths }}" | sed '/^$/d' | sed 's/^/    - /')
+          echo "filter<<EOF" >> $GITHUB_OUTPUT
+          echo "contracts:" >> $GITHUB_OUTPUT
+          echo "$YAML_PATHS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Check for contract changes
         id: filter
         uses: dorny/paths-filter@v3
         with:
-          filters: |
-            contracts:
-              ${{ inputs.contract-paths }}
+          filters: ${{ steps.paths.outputs.filter }}
 
       - name: Decide whether to run
         id: decide
