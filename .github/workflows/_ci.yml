@@ -5,6 +5,10 @@ name: CI (Reusable)
 on:
   workflow_call:
     inputs:
+      deployment-foundry-profile:
+        description: 'Foundry profile to use for deployment (must be defined in foundry.toml)'
+        type: string
+        default: ''
       check-formatting:
         description: 'Run forge fmt --check'
         type: boolean
@@ -18,6 +22,8 @@ jobs:
   check:
     name: Build & Test
     runs-on: ubuntu-latest
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

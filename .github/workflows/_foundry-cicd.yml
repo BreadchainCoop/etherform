@@ -21,6 +21,12 @@ on:
           foundry.toml
           remappings.txt
 
+      # Profile Options
+      deployment-foundry-profile:
+        description: 'Foundry profile to use for deployment (must be defined in foundry.toml)'
+        type: string
+        default: ''
+
       # CI Options
       check-formatting:
         description: 'Run forge fmt --check'
@@ -163,6 +169,8 @@ jobs:
     if: |
       needs.detect-changes.outputs.should-run == 'true' &&
       inputs.run-upgrade-safety
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -171,6 +179,17 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Validate Foundry profile
+        if: inputs.deployment-foundry-profile != ''
+        run: |
+          if ! grep -q "\[profile\.${{ inputs.deployment-foundry-profile }}\]" foundry.toml 2>/dev/null; then
+            echo "::error::Foundry profile '${{ inputs.deployment-foundry-profile }}' not found in foundry.toml"
+            echo "Available profiles:"
+            grep -E "^\[profile\." foundry.toml || echo "  (none found)"
+            exit 1
+          fi
+          echo "✓ Using Foundry profile: ${{ inputs.deployment-foundry-profile }}"
 
       - name: Run upgrade safety validation
         run: |
@@ -190,17 +209,63 @@ jobs:
             echo "No baseline contracts found, skipping upgrade validation (initial deployment)"
           fi
 
+  read-testnet-config:
+    name: Read Testnet Config
+    runs-on: ubuntu-latest
+    if: inputs.deploy-on-pr && github.event_name == 'pull_request'
+    outputs:
+      blockscout_url: ${{ steps.network.outputs.blockscout_url }}
+      network_name: ${{ steps.network.outputs.network_name }}
+      environment: ${{ steps.network.outputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read network config
+        id: network
+        run: |
+          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' ${{ inputs.network-config-path }})
+          NETWORK_NAME=$(jq -r '.testnets[0].name' ${{ inputs.network-config-path }})
+          ENVIRONMENT=$(jq -r '.testnets[0].environment' ${{ inputs.network-config-path }})
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+  read-mainnet-config:
+    name: Read Mainnet Config
+    runs-on: ubuntu-latest
+    if: inputs.deploy-on-main && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      blockscout_url: ${{ steps.network.outputs.blockscout_url }}
+      network_name: ${{ steps.network.outputs.network_name }}
+      environment: ${{ steps.network.outputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read network config
+        id: network
+        run: |
+          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' ${{ inputs.network-config-path }})
+          NETWORK_NAME=$(jq -r '.mainnets[0].name' ${{ inputs.network-config-path }})
+          ENVIRONMENT=$(jq -r '.mainnets[0].environment' ${{ inputs.network-config-path }})
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
   deploy-testnet:
     name: Deploy Testnet
     runs-on: ubuntu-latest
-    needs: [detect-changes, ci, upgrade-safety]
+    needs: [detect-changes, ci, upgrade-safety, read-testnet-config]
+    environment: ${{ needs.read-testnet-config.outputs.environment }}
     if: |
       always() &&
       needs.detect-changes.outputs.should-run == 'true' &&
       needs.ci.result == 'success' &&
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
-      inputs.deploy-on-pr &&
-      github.event_name == 'pull_request'
+      needs.read-testnet-config.result == 'success'
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -209,14 +274,6 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.testnets[0].name' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
 
       - name: Deploy contracts
         env:
@@ -247,36 +304,80 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
+        if: needs.read-testnet-config.outputs.blockscout_url != ''
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-testnet-config.outputs.blockscout_url }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+          VERIFICATION_FAILED=false
+
+          # Use process substitution to avoid subshell issues with variable tracking
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
+
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            # Build constructor args if present
+            CONSTRUCTOR_ARGS_FLAG=""
+
+            # Check if arguments exist in the transaction
+            if echo "$tx" | jq -e '.arguments | length > 0' >/dev/null 2>&1; then
+              # Get constructor signature from compiled contract ABI
+              ABI_JSON=$(forge inspect "$CONTRACT_NAME" abi 2>/dev/null) || true
+
+              if [[ -n "$ABI_JSON" ]] && echo "$ABI_JSON" | jq -e '.' >/dev/null 2>&1; then
+                CONSTRUCTOR_SIG=$(echo "$ABI_JSON" | jq -r '.[] | select(.type == "constructor") | .inputs | map(.type) | join(",")')
+
+                if [[ -n "$CONSTRUCTOR_SIG" ]]; then
+                  # Build args array for cast - each arg needs to be passed separately
+                  ENCODED_ARGS=""
+                  mapfile -t ARGS_ARRAY < <(echo "$tx" | jq -r '.arguments[]')
+
+                  if [[ ${#ARGS_ARRAY[@]} -gt 0 ]]; then
+                    ENCODED_ARGS=$(cast abi-encode "constructor($CONSTRUCTOR_SIG)" "${ARGS_ARRAY[@]}" 2>/dev/null) || true
+                  fi
+
+                  if [[ -n "$ENCODED_ARGS" ]]; then
+                    CONSTRUCTOR_ARGS_FLAG="--constructor-args $ENCODED_ARGS"
+                    echo "  Constructor args encoded: $ENCODED_ARGS"
+                  fi
+                fi
+              fi
+            fi
+
+            VERIFIED=false
             for attempt in 1 2 3; do
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --guess-constructor-args \
+                $CONSTRUCTOR_ARGS_FLAG \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=true
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
                 fi
               fi
             done
-          done
+
+            if [[ "$VERIFIED" == "false" ]]; then
+              echo "✗ Failed to verify $CONTRACT_NAME after 3 attempts"
+              VERIFICATION_FAILED=true
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ "$VERIFICATION_FAILED" == "true" ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Create deployment summary
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-testnet-config.outputs.blockscout_url }}
         run: |
           echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -291,15 +392,16 @@ jobs:
   deploy-mainnet:
     name: Deploy Mainnet
     runs-on: ubuntu-latest
-    needs: [detect-changes, ci, upgrade-safety]
+    needs: [detect-changes, ci, upgrade-safety, read-mainnet-config]
+    environment: ${{ needs.read-mainnet-config.outputs.environment }}
     if: |
       always() &&
       needs.detect-changes.outputs.should-run == 'true' &&
       needs.ci.result == 'success' &&
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
-      inputs.deploy-on-main &&
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
+      needs.read-mainnet-config.result == 'success'
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -308,16 +410,6 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.mainnets[0].name' ${{ inputs.network-config-path }})
-          ENVIRONMENT=$(jq -r '.mainnets[0].environment' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
-          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
 
       - name: Deploy contracts
         env:
@@ -348,36 +440,80 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
+        if: needs.read-mainnet-config.outputs.blockscout_url != ''
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-mainnet-config.outputs.blockscout_url }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+          VERIFICATION_FAILED=false
+
+          # Use process substitution to avoid subshell issues with variable tracking
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
+
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            # Build constructor args if present
+            CONSTRUCTOR_ARGS_FLAG=""
+
+            # Check if arguments exist in the transaction
+            if echo "$tx" | jq -e '.arguments | length > 0' >/dev/null 2>&1; then
+              # Get constructor signature from compiled contract ABI
+              ABI_JSON=$(forge inspect "$CONTRACT_NAME" abi 2>/dev/null) || true
+
+              if [[ -n "$ABI_JSON" ]] && echo "$ABI_JSON" | jq -e '.' >/dev/null 2>&1; then
+                CONSTRUCTOR_SIG=$(echo "$ABI_JSON" | jq -r '.[] | select(.type == "constructor") | .inputs | map(.type) | join(",")')
+
+                if [[ -n "$CONSTRUCTOR_SIG" ]]; then
+                  # Build args array for cast - each arg needs to be passed separately
+                  ENCODED_ARGS=""
+                  mapfile -t ARGS_ARRAY < <(echo "$tx" | jq -r '.arguments[]')
+
+                  if [[ ${#ARGS_ARRAY[@]} -gt 0 ]]; then
+                    ENCODED_ARGS=$(cast abi-encode "constructor($CONSTRUCTOR_SIG)" "${ARGS_ARRAY[@]}" 2>/dev/null) || true
+                  fi
+
+                  if [[ -n "$ENCODED_ARGS" ]]; then
+                    CONSTRUCTOR_ARGS_FLAG="--constructor-args $ENCODED_ARGS"
+                    echo "  Constructor args encoded: $ENCODED_ARGS"
+                  fi
+                fi
+              fi
+            fi
+
+            VERIFIED=false
             for attempt in 1 2 3; do
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --guess-constructor-args \
+                $CONSTRUCTOR_ARGS_FLAG \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=true
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
                 fi
               fi
             done
-          done
+
+            if [[ "$VERIFIED" == "false" ]]; then
+              echo "✗ Failed to verify $CONTRACT_NAME after 3 attempts"
+              VERIFICATION_FAILED=true
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ "$VERIFICATION_FAILED" == "true" ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Create deployment summary
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.read-mainnet-config.outputs.blockscout_url }}
         run: |
           echo "## Mainnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -397,6 +533,8 @@ jobs:
       always() &&
       needs.deploy-mainnet.result == 'success' &&
       inputs.flatten-contracts
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

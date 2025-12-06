@@ -5,6 +5,10 @@ name: Deploy Mainnet (Reusable)
 on:
   workflow_call:
     inputs:
+      deployment-foundry-profile:
+        description: 'Foundry profile to use for deployment (must be defined in foundry.toml)'
+        type: string
+        default: ''
       deploy-script:
         description: 'Path to deployment script'
         type: string
@@ -68,6 +72,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.read-config.outputs.matrix) }}
     environment: ${{ matrix.environment }}
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -110,37 +116,78 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
+        if: matrix.blockscout_url != ''
         env:
           BLOCKSCOUT_URL: ${{ matrix.blockscout_url }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          VERIFICATION_FAILED=false
 
           # Extract and verify each deployed contract with retry logic
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+          # Use process substitution to avoid subshell issues with variable tracking
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
 
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
 
+            # Build constructor args if present
+            CONSTRUCTOR_ARGS_FLAG=""
+
+            # Check if arguments exist in the transaction
+            if echo "$tx" | jq -e '.arguments | length > 0' >/dev/null 2>&1; then
+              # Get constructor signature from compiled contract ABI
+              ABI_JSON=$(forge inspect "$CONTRACT_NAME" abi 2>/dev/null) || true
+
+              if [[ -n "$ABI_JSON" ]] && echo "$ABI_JSON" | jq -e '.' >/dev/null 2>&1; then
+                CONSTRUCTOR_SIG=$(echo "$ABI_JSON" | jq -r '.[] | select(.type == "constructor") | .inputs | map(.type) | join(",")')
+
+                if [[ -n "$CONSTRUCTOR_SIG" ]]; then
+                  # Build args array for cast - each arg needs to be passed separately
+                  ENCODED_ARGS=""
+                  mapfile -t ARGS_ARRAY < <(echo "$tx" | jq -r '.arguments[]')
+
+                  if [[ ${#ARGS_ARRAY[@]} -gt 0 ]]; then
+                    ENCODED_ARGS=$(cast abi-encode "constructor($CONSTRUCTOR_SIG)" "${ARGS_ARRAY[@]}" 2>/dev/null) || true
+                  fi
+
+                  if [[ -n "$ENCODED_ARGS" ]]; then
+                    CONSTRUCTOR_ARGS_FLAG="--constructor-args $ENCODED_ARGS"
+                    echo "  Constructor args encoded: $ENCODED_ARGS"
+                  fi
+                fi
+              fi
+            fi
+
             # Retry up to 3 times with exponential backoff
+            VERIFIED=false
             for attempt in 1 2 3; do
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --guess-constructor-args \
+                $CONSTRUCTOR_ARGS_FLAG \
                 --watch; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=true
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
                 fi
               fi
             done
-          done
+
+            if [[ "$VERIFIED" == "false" ]]; then
+              echo "✗ Failed to verify $CONTRACT_NAME after 3 attempts"
+              VERIFICATION_FAILED=true
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ "$VERIFICATION_FAILED" == "true" ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Save deployment artifacts
         run: |
@@ -177,6 +224,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy]
     if: success() && inputs.flatten-contracts
+    env:
+      FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
