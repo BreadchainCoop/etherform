@@ -5,6 +5,22 @@ name: Foundry CI/CD
 on:
   workflow_call:
     inputs:
+      # Change Detection Options
+      skip-if-no-changes:
+        description: 'Skip workflow if no smart contract files changed'
+        type: boolean
+        default: true
+      contract-paths:
+        description: 'Paths to check for changes (newline-separated glob patterns)'
+        type: string
+        default: |
+          src/**
+          script/**
+          test/**
+          lib/**
+          foundry.toml
+          remappings.txt
+
       # Profile Options
       deployment-foundry-profile:
         description: 'Foundry profile to use for deployment (must be defined in foundry.toml)'
@@ -77,9 +93,45 @@ on:
         required: false
 
 jobs:
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      contracts-changed: ${{ steps.filter.outputs.contracts }}
+      should-run: ${{ steps.decide.outputs.should-run }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for contract changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            contracts:
+              ${{ inputs.contract-paths }}
+
+      - name: Decide whether to run
+        id: decide
+        run: |
+          if [[ "${{ inputs.skip-if-no-changes }}" == "false" ]]; then
+            echo "Change detection disabled, workflow will run"
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.filter.outputs.contracts }}" == "true" ]]; then
+            echo "Contract changes detected, workflow will run"
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          else
+            echo "No contract changes detected, skipping workflow"
+            echo "should-run=false" >> $GITHUB_OUTPUT
+          fi
+
   ci:
     name: Build & Test
     runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.should-run == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -105,8 +157,10 @@ jobs:
   upgrade-safety:
     name: Upgrade Safety
     runs-on: ubuntu-latest
-    needs: [ci]
-    if: inputs.run-upgrade-safety
+    needs: [detect-changes, ci]
+    if: |
+      needs.detect-changes.outputs.should-run == 'true' &&
+      inputs.run-upgrade-safety
     env:
       FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
     steps:
@@ -194,10 +248,11 @@ jobs:
   deploy-testnet:
     name: Deploy Testnet
     runs-on: ubuntu-latest
-    needs: [ci, upgrade-safety, read-testnet-config]
+    needs: [detect-changes, ci, upgrade-safety, read-testnet-config]
     environment: ${{ needs.read-testnet-config.outputs.environment }}
     if: |
       always() &&
+      needs.detect-changes.outputs.should-run == 'true' &&
       needs.ci.result == 'success' &&
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
       needs.read-testnet-config.result == 'success'
@@ -329,10 +384,11 @@ jobs:
   deploy-mainnet:
     name: Deploy Mainnet
     runs-on: ubuntu-latest
-    needs: [ci, upgrade-safety, read-mainnet-config]
+    needs: [detect-changes, ci, upgrade-safety, read-mainnet-config]
     environment: ${{ needs.read-mainnet-config.outputs.environment }}
     if: |
       always() &&
+      needs.detect-changes.outputs.should-run == 'true' &&
       needs.ci.result == 'success' &&
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
       needs.read-mainnet-config.result == 'success'
