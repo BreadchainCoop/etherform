@@ -90,8 +90,15 @@ jobs:
               continue
             fi
 
-            CURRENT_CONTRACT="${CURRENT_FILE}:${CONTRACT_NAME}"
-            REFERENCE_CONTRACT="${BASELINE_DIR}/${CONTRACT_NAME}.sol:${CONTRACT_NAME}"
+            # Forge output structure strips src/ and test/upgrades/ prefixes from artifact paths:
+            #   src/Counter.sol -> out/Counter.sol/Counter.json
+            #   test/upgrades/baseline/Counter.sol -> out/baseline/Counter.sol/Counter.json
+            # OZ Foundry Upgrades uses the contract path to find artifacts, so we must match this structure
+            CURRENT_CONTRACT="${CONTRACT_NAME}.sol:${CONTRACT_NAME}"
+
+            # Get path relative to test/upgrades/ for baseline
+            BASELINE_RELATIVE=$(echo "$BASELINE_DIR" | sed 's|^test/upgrades/||')
+            REFERENCE_CONTRACT="${BASELINE_RELATIVE}/${CONTRACT_NAME}.sol:${CONTRACT_NAME}"
 
             echo "Validating upgrade: $CURRENT_CONTRACT <- $REFERENCE_CONTRACT"
 
