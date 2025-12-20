@@ -1,0 +1,211 @@
+# Foundry Post-Mainnet - Flatten snapshots and create release
+# Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-post-mainnet.yml@main
+name: Post Mainnet
+
+on:
+  workflow_call:
+    inputs:
+      flatten-contracts:
+        description: 'Flatten and commit contract snapshots'
+        type: boolean
+        default: true
+      create-release:
+        description: 'Create GitHub release'
+        type: boolean
+        default: true
+      release-prefix:
+        description: 'Prefix for release tags'
+        type: string
+        default: ''
+      upgrades-path:
+        description: 'Path for flattened contract snapshots'
+        type: string
+        default: 'test/upgrades'
+      network-name:
+        description: 'Network name for release notes'
+        type: string
+        default: 'Sepolia'
+      blockscout-url:
+        description: 'Blockscout URL for explorer links'
+        type: string
+        default: 'https://eth-sepolia.blockscout.com'
+    secrets:
+      GH_TOKEN:
+        description: 'GitHub token for pushing commits and creating releases'
+        required: false
+
+jobs:
+  flatten:
+    name: Flatten Snapshots
+    runs-on: ubuntu-latest
+    if: inputs.flatten-contracts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GH_TOKEN || github.token }}
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Extract and flatten contracts
+        env:
+          UPGRADES_PATH: ${{ inputs.upgrades-path }}
+        run: |
+          mkdir -p "${UPGRADES_PATH}/current"
+
+          CONTRACTS=$(find broadcast -name "run-latest.json" -type f -exec \
+            jq -r '.transactions[] | select(.transactionType == "CREATE") | "src/\(.contractName).sol"' {} \; 2>/dev/null | sort -u)
+
+          if [[ -z "$CONTRACTS" ]]; then
+            CONTRACTS=$(find src -maxdepth 1 -type f -name "*.sol")
+          fi
+
+          echo "$CONTRACTS" | while read -r contract; do
+            if [[ -f "$contract" ]]; then
+              name=$(basename "$contract")
+              echo "Flattening $contract..."
+              forge flatten "$contract" > "${UPGRADES_PATH}/current/$name"
+            fi
+          done
+
+      - name: Promote snapshots (3-tier rotation)
+        env:
+          UPGRADES_PATH: ${{ inputs.upgrades-path }}
+        run: |
+          if [[ -d "${UPGRADES_PATH}/baseline" ]] && ls ${UPGRADES_PATH}/baseline/*.sol 1> /dev/null 2>&1; then
+            echo "Baseline exists, performing 3-tier rotation..."
+            rm -rf "${UPGRADES_PATH}/previous"
+            cp -r "${UPGRADES_PATH}/baseline" "${UPGRADES_PATH}/previous"
+            rm -rf "${UPGRADES_PATH}/baseline"
+            cp -r "${UPGRADES_PATH}/current" "${UPGRADES_PATH}/baseline"
+            COMMIT_MSG="chore: auto-flatten contracts after deploy [skip ci]"
+          else
+            echo "No baseline found, initializing..."
+            mkdir -p "${UPGRADES_PATH}/baseline"
+            cp -r "${UPGRADES_PATH}/current/"* "${UPGRADES_PATH}/baseline/"
+            COMMIT_MSG="chore: init upgrade baseline [skip ci]"
+          fi
+          echo "commit_msg=$COMMIT_MSG" >> $GITHUB_ENV
+
+      - name: Commit flattened contracts
+        env:
+          UPGRADES_PATH: ${{ inputs.upgrades-path }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${UPGRADES_PATH}/" || true
+          if git diff --staged --quiet; then
+            echo "No snapshot changes to commit"
+          else
+            git commit -m "$commit_msg"
+            git push
+          fi
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [flatten]
+    if: always() && inputs.create-release && (needs.flatten.result == 'success' || needs.flatten.result == 'skipped')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: deployment-mainnet
+          path: deployments/
+
+      - name: Parse broadcast file
+        id: parse
+        run: |
+          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
+          if [[ -z "$BROADCAST_FILE" ]]; then
+            echo "No broadcast file found, checking for deployment artifact..."
+            # Fall back to deployment artifact
+            if [[ -f "deployments/*/deployment.json" ]]; then
+              echo "Using deployment artifact"
+            fi
+          fi
+          echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
+          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" 2>/dev/null | tee deployment-summary.txt || true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+          BLOCKSCOUT_URL: ${{ inputs.blockscout-url }}
+          NETWORK_NAME: ${{ inputs.network-name }}
+          UPGRADES_PATH: ${{ inputs.upgrades-path }}
+        run: |
+          set -euo pipefail
+
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TAG="${{ inputs.release-prefix }}mainnet-${SHORT_SHA}"
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          # Build release body
+          cat > release-notes.md << EOF
+          ## Mainnet Deployment
+
+          **Network:** ${NETWORK_NAME}
+          **Date:** ${DATE}
+          **Commit:** [\`${SHORT_SHA}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})
+
+          ### Deployed Contracts
+
+          | Contract | Address | Explorer |
+          |----------|---------|----------|
+          EOF
+
+          # Add contract rows
+          if [[ -f deployment-summary.txt ]] && [[ -s deployment-summary.txt ]]; then
+            while read -r line; do
+              CONTRACT=$(echo "$line" | cut -d: -f1)
+              ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
+              echo "| ${CONTRACT} | \`${ADDRESS}\` | [View](${BLOCKSCOUT_URL}/address/${ADDRESS}) |" >> release-notes.md
+            done < deployment-summary.txt
+          fi
+
+          # Add transaction details if broadcast file exists
+          if [[ -n "$BROADCAST_FILE" ]] && [[ -f "$BROADCAST_FILE" ]]; then
+            echo "" >> release-notes.md
+            echo "### Deployment Transactions" >> release-notes.md
+            echo "" >> release-notes.md
+            echo "| Contract | Transaction |" >> release-notes.md
+            echo "|----------|-------------|" >> release-notes.md
+            jq -r '.transactions[] | select(.transactionType == "CREATE") | "| \(.contractName) | [\(.hash)]('"${BLOCKSCOUT_URL}"'/tx/\(.hash)) |"' "$BROADCAST_FILE" >> release-notes.md
+          fi
+
+          # Add commit info
+          echo "" >> release-notes.md
+          echo "### Commit Details" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "**Message:** $(git log -1 --pretty=%s)" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "**Author:** $(git log -1 --pretty='%an <%ae>')" >> release-notes.md
+
+          # Collect flattened contracts as assets if they exist
+          ASSETS=""
+          if [[ -d "${UPGRADES_PATH}/current" ]]; then
+            for f in ${UPGRADES_PATH}/current/*.sol; do
+              if [[ -f "$f" ]]; then
+                ASSETS="$ASSETS $f"
+              fi
+            done
+          fi
+
+          # Create release
+          gh release create "$TAG" \
+            --title "Mainnet Deployment - ${DATE}" \
+            --notes-file release-notes.md \
+            $ASSETS
+
+          echo "::notice::Created release $TAG"

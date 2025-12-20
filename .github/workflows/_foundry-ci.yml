@@ -1,0 +1,79 @@
+# Foundry CI - Build, Test, Format Check, Compiler Validation
+# Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-ci.yml@main
+name: Foundry CI
+
+on:
+  workflow_call:
+    inputs:
+      check-formatting:
+        description: 'Run forge fmt --check'
+        type: boolean
+        default: true
+      test-verbosity:
+        description: 'Test verbosity level (v, vv, vvv, vvvv)'
+        type: string
+        default: 'vvv'
+      validate-compiler-config:
+        description: 'Validate bytecode_hash and cbor_metadata settings'
+        type: boolean
+        default: true
+
+jobs:
+  ci:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Validate compiler config
+        if: inputs.validate-compiler-config
+        run: |
+          set -euo pipefail
+
+          ERRORS=0
+
+          # Check bytecode_hash = "none"
+          if grep -q 'bytecode_hash\s*=\s*"none"' foundry.toml; then
+            echo "✓ bytecode_hash = \"none\""
+          else
+            echo "::error::foundry.toml must set bytecode_hash = \"none\" for deterministic bytecode"
+            ERRORS=1
+          fi
+
+          # Check cbor_metadata = false
+          if grep -q 'cbor_metadata\s*=\s*false' foundry.toml; then
+            echo "✓ cbor_metadata = false"
+          else
+            echo "::error::foundry.toml must set cbor_metadata = false for deterministic bytecode"
+            ERRORS=1
+          fi
+
+          if [[ $ERRORS -eq 1 ]]; then
+            echo ""
+            echo "Required foundry.toml settings for CI/CD:"
+            echo "  [profile.default]"
+            echo "  bytecode_hash = \"none\""
+            echo "  cbor_metadata = false"
+            exit 1
+          fi
+
+          echo "Compiler config validated successfully"
+
+      - name: Check formatting
+        if: inputs.check-formatting
+        run: forge fmt --check
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Run tests
+        run: forge test -${{ inputs.test-verbosity }}
