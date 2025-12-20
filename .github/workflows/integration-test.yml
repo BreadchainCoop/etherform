@@ -36,6 +36,7 @@ jobs:
     needs: [test-ci]
     uses: ./.github/workflows/_foundry-upgrade-safety.yml
     with:
-      baseline-path: 'examples/foundry-counter/test/upgrades/baseline'
-      upgrades-path: 'examples/foundry-counter/test/upgrades'
+      # Paths are relative to working-directory
+      baseline-path: 'test/upgrades/baseline'
+      upgrades-path: 'test/upgrades'
       working-directory: 'examples/foundry-counter'
