@@ -19,6 +19,10 @@ on:
           lib/**
           foundry.toml
           remappings.txt
+      working-directory:
+        description: 'Working directory for change detection'
+        type: string
+        default: '.'
     outputs:
       should-run:
         description: 'Whether the workflow should run'

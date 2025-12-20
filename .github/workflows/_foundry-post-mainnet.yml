@@ -29,6 +29,10 @@ on:
         description: 'Blockscout URL for explorer links'
         type: string
         default: 'https://eth-sepolia.blockscout.com'
+      working-directory:
+        description: 'Working directory for Foundry commands'
+        type: string
+        default: '.'
     secrets:
       GH_TOKEN:
         description: 'GitHub token for pushing commits and creating releases'
@@ -39,6 +43,9 @@ jobs:
     name: Flatten Snapshots
     runs-on: ubuntu-latest
     if: inputs.flatten-contracts
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -111,6 +118,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [flatten]
     if: always() && inputs.create-release && (needs.flatten.result == 'success' || needs.flatten.result == 'skipped')
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

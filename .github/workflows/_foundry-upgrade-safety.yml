@@ -13,11 +13,18 @@ on:
         description: 'Path for flattened contract snapshots'
         type: string
         default: 'test/upgrades'
+      working-directory:
+        description: 'Working directory for Foundry commands'
+        type: string
+        default: '.'
 
 jobs:
   validate:
     name: Upgrade Safety
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

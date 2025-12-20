@@ -1,0 +1,41 @@
+# Integration Tests - Validate workflow changes against example project
+# Runs when workflow files change to catch issues before affecting external consumers
+name: Integration Tests
+
+on:
+  push:
+    paths:
+      - '.github/workflows/_foundry-*.yml'
+      - '.github/workflows/integration-test.yml'
+      - 'examples/foundry-counter/**'
+  pull_request:
+    paths:
+      - '.github/workflows/_foundry-*.yml'
+      - '.github/workflows/integration-test.yml'
+      - 'examples/foundry-counter/**'
+  workflow_dispatch:
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Test CI Workflow (build, test, format, compiler validation)
+  # ─────────────────────────────────────────────────────────────────────────────
+  test-ci:
+    name: Test CI Workflow
+    uses: ./.github/workflows/_foundry-ci.yml
+    with:
+      check-formatting: true
+      test-verbosity: 'vvv'
+      validate-compiler-config: true
+      working-directory: 'examples/foundry-counter'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Test Upgrade Safety Workflow
+  # ─────────────────────────────────────────────────────────────────────────────
+  test-upgrade-safety:
+    name: Test Upgrade Safety Workflow
+    needs: [test-ci]
+    uses: ./.github/workflows/_foundry-upgrade-safety.yml
+    with:
+      baseline-path: 'examples/foundry-counter/test/upgrades/baseline'
+      upgrades-path: 'examples/foundry-counter/test/upgrades'
+      working-directory: 'examples/foundry-counter'

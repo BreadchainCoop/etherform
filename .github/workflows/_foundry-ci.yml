@@ -17,11 +17,18 @@ on:
         description: 'Validate bytecode_hash and cbor_metadata settings'
         type: boolean
         default: true
+      working-directory:
+        description: 'Working directory for Foundry commands'
+        type: string
+        default: '.'
 
 jobs:
   ci:
     name: Build & Test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

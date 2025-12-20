@@ -33,6 +33,10 @@ on:
         description: 'Commit SHA for PR comment'
         type: string
         default: ''
+      working-directory:
+        description: 'Working directory for Foundry commands'
+        type: string
+        default: '.'
     outputs:
       broadcast-file:
         description: 'Path to broadcast file'
@@ -55,6 +59,9 @@ jobs:
   deploy:
     name: Deploy to ${{ inputs.network-name }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     outputs:
       broadcast-file: ${{ steps.parse.outputs.broadcast_file }}
       deployment-artifact: ${{ steps.artifact.outputs.artifact_path }}

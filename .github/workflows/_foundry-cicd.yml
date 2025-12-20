@@ -105,6 +105,12 @@ on:
         type: string
         default: ''
 
+      # Working Directory
+      working-directory:
+        description: 'Working directory for Foundry commands'
+        type: string
+        default: '.'
+
     secrets:
       PRIVATE_KEY:
         description: 'Deployer wallet private key'
@@ -125,6 +131,7 @@ jobs:
     with:
       skip-if-no-changes: ${{ inputs.skip-if-no-changes }}
       contract-paths: ${{ inputs.contract-paths }}
+      working-directory: ${{ inputs.working-directory }}
 
   # ─────────────────────────────────────────────────────────────────────────────
   # CI: Build & Test
@@ -136,6 +143,7 @@ jobs:
     with:
       check-formatting: ${{ inputs.check-formatting }}
       test-verbosity: ${{ inputs.test-verbosity }}
+      working-directory: ${{ inputs.working-directory }}
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Upgrade Safety Validation
@@ -149,6 +157,7 @@ jobs:
     with:
       baseline-path: ${{ inputs.baseline-path }}
       upgrades-path: ${{ inputs.upgrades-path }}
+      working-directory: ${{ inputs.working-directory }}
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Testnet Deployment (on PR)
@@ -171,6 +180,7 @@ jobs:
       indexing-wait: ${{ inputs.indexing-wait }}
       pr-number: ${{ github.event.pull_request.number }}
       commit-sha: ${{ github.event.pull_request.head.sha }}
+      working-directory: ${{ inputs.working-directory }}
     secrets:
       PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
       RPC_URL: ${{ secrets.RPC_URL }}
@@ -196,6 +206,7 @@ jobs:
       blockscout-url: ${{ inputs.mainnet-blockscout-url }}
       network-name: ${{ inputs.mainnet-name }}
       indexing-wait: ${{ inputs.indexing-wait }}
+      working-directory: ${{ inputs.working-directory }}
     secrets:
       PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
       RPC_URL: ${{ secrets.RPC_URL }}
@@ -223,5 +234,6 @@ jobs:
       upgrades-path: ${{ inputs.upgrades-path }}
       network-name: ${{ inputs.mainnet-name }}
       blockscout-url: ${{ inputs.mainnet-blockscout-url }}
+      working-directory: ${{ inputs.working-directory }}
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
