@@ -1,0 +1,3 @@
+[submodule "examples/foundry-counter"]
+	path = examples/foundry-counter
+	url = https://github.com/BreadchainCoop/foundry-upgradeable-counter-example.git

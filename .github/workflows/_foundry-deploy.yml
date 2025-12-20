@@ -1,0 +1,252 @@
+# Foundry Deploy - Deploy contracts with verification
+# Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-deploy.yml@main
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      network-type:
+        description: 'Network type (testnet or mainnet)'
+        type: string
+        required: true
+      deploy-script:
+        description: 'Path to deployment script'
+        type: string
+        default: 'script/Deploy.s.sol:Deploy'
+      blockscout-url:
+        description: 'Blockscout URL for verification and explorer links'
+        type: string
+        default: 'https://eth-sepolia.blockscout.com'
+      network-name:
+        description: 'Network name for display'
+        type: string
+        default: 'Sepolia'
+      indexing-wait:
+        description: 'Seconds to wait for indexer before verification'
+        type: number
+        default: 60
+      pr-number:
+        description: 'PR number for commenting (testnet only)'
+        type: string
+        default: ''
+      commit-sha:
+        description: 'Commit SHA for PR comment'
+        type: string
+        default: ''
+      working-directory:
+        description: 'Working directory for Foundry commands'
+        type: string
+        default: '.'
+    outputs:
+      broadcast-file:
+        description: 'Path to broadcast file'
+        value: ${{ jobs.deploy.outputs.broadcast-file }}
+      deployment-artifact:
+        description: 'Path to deployment artifact'
+        value: ${{ jobs.deploy.outputs.deployment-artifact }}
+    secrets:
+      PRIVATE_KEY:
+        description: 'Deployer wallet private key'
+        required: true
+      RPC_URL:
+        description: 'Network RPC endpoint'
+        required: true
+      GH_TOKEN:
+        description: 'GitHub token for PR comments'
+        required: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.network-name }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    outputs:
+      broadcast-file: ${{ steps.parse.outputs.broadcast_file }}
+      deployment-artifact: ${{ steps.artifact.outputs.artifact_path }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Deploy contracts
+        env:
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+        run: |
+          if [[ "$PRIVATE_KEY" != 0x* ]]; then
+            export PRIVATE_KEY="0x$PRIVATE_KEY"
+          fi
+          forge script ${{ inputs.deploy-script }} \
+            --rpc-url "$RPC_URL" \
+            --broadcast \
+            --slow \
+            -vvvv
+
+      - name: Wait for indexing
+        run: sleep ${{ inputs.indexing-wait }}
+
+      - name: Parse deployment addresses
+        id: parse
+        run: |
+          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
+          if [[ -z "$BROADCAST_FILE" ]]; then
+            echo "No broadcast file found"
+            exit 1
+          fi
+          echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
+          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
+
+      - name: Create deployment artifact
+        id: artifact
+        env:
+          NETWORK_TYPE: ${{ inputs.network-type }}
+          NETWORK_NAME: ${{ inputs.network-name }}
+        run: |
+          set -euo pipefail
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+
+          if [[ "$NETWORK_TYPE" == "testnet" ]]; then
+            ARTIFACT_DIR="deployments/testnet"
+          else
+            NETWORK_DIR=$(echo "$NETWORK_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+            ARTIFACT_DIR="deployments/${NETWORK_DIR}"
+          fi
+
+          mkdir -p "$ARTIFACT_DIR"
+
+          # Create deployment.json with spec schema
+          jq '[.transactions[] | select(.transactionType == "CREATE") | {
+            sourcePathAndName: "src/\(.contractName).sol:\(.contractName)",
+            address: .contractAddress
+          }]' "$BROADCAST_FILE" | jq '{contracts: .}' > "${ARTIFACT_DIR}/deployment.json"
+
+          echo "Created ${ARTIFACT_DIR}/deployment.json:"
+          cat "${ARTIFACT_DIR}/deployment.json"
+          echo "artifact_path=${ARTIFACT_DIR}/deployment.json" >> $GITHUB_OUTPUT
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ inputs.network-type }}
+          path: deployments/*/deployment.json
+
+      - name: Verify contracts on Blockscout
+        env:
+          BLOCKSCOUT_URL: ${{ inputs.blockscout-url }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+        run: |
+          set -euo pipefail
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          FAILED=0
+
+          while read -r tx; do
+            CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
+            CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
+
+            # Find source file to create fully qualified name (disambiguates from lib/ contracts)
+            SOURCE_FILE=$(find src script -name "${CONTRACT_NAME}.sol" -type f 2>/dev/null | head -1)
+            if [[ -n "$SOURCE_FILE" ]]; then
+              FULL_CONTRACT="${SOURCE_FILE}:${CONTRACT_NAME}"
+            else
+              FULL_CONTRACT="$CONTRACT_NAME"
+            fi
+
+            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR (using $FULL_CONTRACT)..."
+            VERIFIED=0
+            for attempt in 1 2 3; do
+              if forge verify-contract "$CONTRACT_ADDR" "$FULL_CONTRACT" \
+                --verifier blockscout \
+                --verifier-url "${BLOCKSCOUT_URL}/api" \
+                --rpc-url "$RPC_URL" \
+                --guess-constructor-args \
+                --watch; then
+                echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=1
+                break
+              else
+                if [[ $attempt -lt 3 ]]; then
+                  echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
+                  sleep $((attempt * 30))
+                fi
+              fi
+            done
+            if [[ $VERIFIED -eq 0 ]]; then
+              echo "::error::Failed to verify $CONTRACT_NAME after 3 attempts"
+              FAILED=1
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ $FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
+
+      - name: Create deployment summary
+        env:
+          BLOCKSCOUT_URL: ${{ inputs.blockscout-url }}
+          NETWORK_TYPE: ${{ inputs.network-type }}
+        run: |
+          TITLE=$(echo "$NETWORK_TYPE" | sed 's/.*/\u&/')net
+          echo "## ${TITLE} Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
+          while read -r line; do
+            CONTRACT=$(echo "$line" | cut -d: -f1)
+            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
+            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
+          done < deployment-summary.txt
+
+      - name: Comment on PR with deployment info
+        if: inputs.network-type == 'testnet' && inputs.pr-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+          BLOCKSCOUT_URL: ${{ inputs.blockscout-url }}
+          NETWORK_NAME: ${{ inputs.network-name }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          COMMIT_SHA: ${{ inputs.commit-sha }}
+        run: |
+          set -euo pipefail
+
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+
+          # Build comment body
+          cat > pr-comment.md << EOF
+          ## Testnet Deployment
+
+          **Network:** ${NETWORK_NAME}
+          **Commit:** \`${SHORT_SHA}\`
+
+          ### Deployed Contracts
+
+          | Contract | Address | Explorer |
+          |----------|---------|----------|
+          EOF
+
+          # Add contract rows
+          while read -r line; do
+            CONTRACT=$(echo "$line" | cut -d: -f1)
+            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
+            echo "| ${CONTRACT} | \`${ADDRESS}\` | [View](${BLOCKSCOUT_URL}/address/${ADDRESS}) |" >> pr-comment.md
+          done < deployment-summary.txt
+
+          # Add transaction links
+          echo "" >> pr-comment.md
+          echo "<details>" >> pr-comment.md
+          echo "<summary>Deployment Transactions</summary>" >> pr-comment.md
+          echo "" >> pr-comment.md
+          echo "| Contract | Transaction |" >> pr-comment.md
+          echo "|----------|-------------|" >> pr-comment.md
+          jq -r '.transactions[] | select(.transactionType == "CREATE") | "| \(.contractName) | [\(.hash)]('"${BLOCKSCOUT_URL}"'/tx/\(.hash)) |"' "$BROADCAST_FILE" >> pr-comment.md
+          echo "" >> pr-comment.md
+          echo "</details>" >> pr-comment.md
+
+          # Post comment to PR
+          gh pr comment "$PR_NUMBER" --body-file pr-comment.md

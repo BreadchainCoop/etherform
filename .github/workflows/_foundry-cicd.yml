@@ -1,5 +1,13 @@
-# All-in-one Foundry CI/CD reusable workflow
+# All-in-one Foundry CI/CD reusable workflow (orchestrator)
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-cicd.yml@main
+#
+# This is the main entry point that orchestrates all sub-workflows.
+# For more granular control, you can import individual workflows:
+#   - _foundry-detect-changes.yml - Change detection
+#   - _foundry-ci.yml - Build, test, format check
+#   - _foundry-upgrade-safety.yml - Upgrade safety validation
+#   - _foundry-deploy.yml - Deploy with verification
+#   - _foundry-post-mainnet.yml - Flatten snapshots and create release
 name: Foundry CI/CD
 
 on:
@@ -40,10 +48,6 @@ on:
         description: 'Path to baseline contracts for upgrade comparison'
         type: string
         default: 'test/upgrades/baseline'
-      validation-script:
-        description: 'Path to upgrade validation script'
-        type: string
-        default: 'script/upgrades/ValidateUpgrade.s.sol'
 
       # Deploy Options
       deploy-on-pr:
@@ -58,10 +62,22 @@ on:
         description: 'Path to deployment script'
         type: string
         default: 'script/Deploy.s.sol:Deploy'
-      network-config-path:
-        description: 'Path to network configuration JSON'
+      testnet-blockscout-url:
+        description: 'Blockscout URL for testnet verification and explorer links'
         type: string
-        default: '.github/deploy-networks.json'
+        default: 'https://eth-sepolia.blockscout.com'
+      testnet-name:
+        description: 'Testnet network name for display'
+        type: string
+        default: 'Sepolia'
+      mainnet-blockscout-url:
+        description: 'Blockscout URL for mainnet verification and explorer links'
+        type: string
+        default: 'https://eth-sepolia.blockscout.com'
+      mainnet-name:
+        description: 'Mainnet network name for display'
+        type: string
+        default: 'Sepolia'
       indexing-wait:
         description: 'Seconds to wait for indexer before verification'
         type: number
@@ -70,10 +86,30 @@ on:
         description: 'Flatten and commit contract snapshots after mainnet deploy'
         type: boolean
         default: true
+      init-baseline-without-deploy:
+        description: 'Initialize baseline on merge to main even if deploy-on-main is disabled'
+        type: boolean
+        default: false
       upgrades-path:
         description: 'Path for flattened contract snapshots'
         type: string
         default: 'test/upgrades'
+
+      # Release Options
+      create-release:
+        description: 'Create GitHub release after deployment'
+        type: boolean
+        default: true
+      release-prefix:
+        description: 'Prefix for release tags (e.g., "v" for v1.0.0 style)'
+        type: string
+        default: ''
+
+      # Working Directory
+      working-directory:
+        description: 'Working directory for Foundry commands'
+        type: string
+        default: '.'
 
     secrets:
       PRIVATE_KEY:
@@ -87,112 +123,46 @@ on:
         required: false
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Change Detection
+  # ─────────────────────────────────────────────────────────────────────────────
   detect-changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    outputs:
-      contracts-changed: ${{ steps.filter.outputs.contracts }}
-      should-run: ${{ steps.decide.outputs.should-run }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    uses: BreadchainCoop/etherform/.github/workflows/_foundry-detect-changes.yml@main
+    with:
+      skip-if-no-changes: ${{ inputs.skip-if-no-changes }}
+      contract-paths: ${{ inputs.contract-paths }}
+      working-directory: ${{ inputs.working-directory }}
 
-      - name: Build paths filter
-        id: paths
-        run: |
-          # Convert newline-separated paths to YAML list format
-          YAML_PATHS=$(echo "${{ inputs.contract-paths }}" | sed '/^$/d' | sed 's/^/    - /')
-          echo "filter<<EOF" >> $GITHUB_OUTPUT
-          echo "contracts:" >> $GITHUB_OUTPUT
-          echo "$YAML_PATHS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Check for contract changes
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: ${{ steps.paths.outputs.filter }}
-
-      - name: Decide whether to run
-        id: decide
-        run: |
-          if [[ "${{ inputs.skip-if-no-changes }}" == "false" ]]; then
-            echo "Change detection disabled, workflow will run"
-            echo "should-run=true" >> $GITHUB_OUTPUT
-          elif [[ "${{ steps.filter.outputs.contracts }}" == "true" ]]; then
-            echo "Contract changes detected, workflow will run"
-            echo "should-run=true" >> $GITHUB_OUTPUT
-          else
-            echo "No contract changes detected, skipping workflow"
-            echo "should-run=false" >> $GITHUB_OUTPUT
-          fi
-
+  # ─────────────────────────────────────────────────────────────────────────────
+  # CI: Build & Test
+  # ─────────────────────────────────────────────────────────────────────────────
   ci:
-    name: Build & Test
-    runs-on: ubuntu-latest
     needs: [detect-changes]
     if: needs.detect-changes.outputs.should-run == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+    uses: BreadchainCoop/etherform/.github/workflows/_foundry-ci.yml@main
+    with:
+      check-formatting: ${{ inputs.check-formatting }}
+      test-verbosity: ${{ inputs.test-verbosity }}
+      working-directory: ${{ inputs.working-directory }}
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Show Forge version
-        run: forge --version
-
-      - name: Check formatting
-        if: inputs.check-formatting
-        run: forge fmt --check
-
-      - name: Build contracts
-        run: forge build
-
-      - name: Run tests
-        run: forge test -${{ inputs.test-verbosity }}
-
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Upgrade Safety Validation
+  # ─────────────────────────────────────────────────────────────────────────────
   upgrade-safety:
-    name: Upgrade Safety
-    runs-on: ubuntu-latest
     needs: [detect-changes, ci]
     if: |
       needs.detect-changes.outputs.should-run == 'true' &&
       inputs.run-upgrade-safety
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+    uses: BreadchainCoop/etherform/.github/workflows/_foundry-upgrade-safety.yml@main
+    with:
+      baseline-path: ${{ inputs.baseline-path }}
+      upgrades-path: ${{ inputs.upgrades-path }}
+      working-directory: ${{ inputs.working-directory }}
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Run upgrade safety validation
-        run: |
-          forge clean && forge build
-
-          BASELINE="${{ inputs.baseline-path }}"
-          FALLBACK="${{ inputs.baseline-path }}/../previous"
-
-          if [ -d "$BASELINE" ] && ls ${BASELINE}/*.sol 1> /dev/null 2>&1; then
-            echo "Baseline contracts found in $BASELINE, running upgrade validation..."
-            forge script ${{ inputs.validation-script }} -vvv
-          elif [ -d "$FALLBACK" ] && ls ${FALLBACK}/*.sol 1> /dev/null 2>&1; then
-            echo "Baseline contracts found in $FALLBACK (fallback path), running upgrade validation..."
-            forge script ${{ inputs.validation-script }} -vvv
-          else
-            echo "::warning::Baseline missing — will auto-init on first merge to main"
-            echo "No baseline contracts found, skipping upgrade validation (initial deployment)"
-          fi
-
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Testnet Deployment (on PR)
+  # ─────────────────────────────────────────────────────────────────────────────
   deploy-testnet:
-    name: Deploy Testnet
-    runs-on: ubuntu-latest
     needs: [detect-changes, ci, upgrade-safety]
     if: |
       always() &&
@@ -201,96 +171,25 @@ jobs:
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
       inputs.deploy-on-pr &&
       github.event_name == 'pull_request'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+    uses: BreadchainCoop/etherform/.github/workflows/_foundry-deploy.yml@main
+    with:
+      network-type: testnet
+      deploy-script: ${{ inputs.deploy-script }}
+      blockscout-url: ${{ inputs.testnet-blockscout-url }}
+      network-name: ${{ inputs.testnet-name }}
+      indexing-wait: ${{ inputs.indexing-wait }}
+      pr-number: ${{ github.event.pull_request.number }}
+      commit-sha: ${{ github.event.pull_request.head.sha }}
+      working-directory: ${{ inputs.working-directory }}
+    secrets:
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+      RPC_URL: ${{ secrets.RPC_URL }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.testnets[0].name' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
-
-      - name: Deploy contracts
-        env:
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          RPC_URL: ${{ secrets.RPC_URL }}
-        run: |
-          if [[ "$PRIVATE_KEY" != 0x* ]]; then
-            export PRIVATE_KEY="0x$PRIVATE_KEY"
-          fi
-          forge script ${{ inputs.deploy-script }} \
-            --rpc-url "$RPC_URL" \
-            --broadcast \
-            --slow \
-            -vvvv
-
-      - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
-
-      - name: Parse deployment addresses
-        id: parse
-        run: |
-          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
-          if [[ -z "$BROADCAST_FILE" ]]; then
-            echo "No broadcast file found"
-            exit 1
-          fi
-          echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
-          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
-
-      - name: Verify contracts on Blockscout
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-        run: |
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
-            CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
-            CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
-            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
-            for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
-                --verifier blockscout \
-                --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --guess-constructor-args \
-                --watch; then
-                echo "✓ Verified $CONTRACT_NAME"
-                break
-              else
-                if [[ $attempt -lt 3 ]]; then
-                  echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
-                  sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
-                fi
-              fi
-            done
-          done
-
-      - name: Create deployment summary
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-        run: |
-          echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
-          done < deployment-summary.txt
-
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Mainnet Deployment (on merge to main)
+  # ─────────────────────────────────────────────────────────────────────────────
   deploy-mainnet:
-    name: Deploy Mainnet
-    runs-on: ubuntu-latest
     needs: [detect-changes, ci, upgrade-safety]
     if: |
       always() &&
@@ -300,166 +199,41 @@ jobs:
       inputs.deploy-on-main &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+    uses: BreadchainCoop/etherform/.github/workflows/_foundry-deploy.yml@main
+    with:
+      network-type: mainnet
+      deploy-script: ${{ inputs.deploy-script }}
+      blockscout-url: ${{ inputs.mainnet-blockscout-url }}
+      network-name: ${{ inputs.mainnet-name }}
+      indexing-wait: ${{ inputs.indexing-wait }}
+      working-directory: ${{ inputs.working-directory }}
+    secrets:
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+      RPC_URL: ${{ secrets.RPC_URL }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.mainnets[0].name' ${{ inputs.network-config-path }})
-          ENVIRONMENT=$(jq -r '.mainnets[0].environment' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
-          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
-
-      - name: Deploy contracts
-        env:
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          RPC_URL: ${{ secrets.RPC_URL }}
-        run: |
-          if [[ "$PRIVATE_KEY" != 0x* ]]; then
-            export PRIVATE_KEY="0x$PRIVATE_KEY"
-          fi
-          forge script ${{ inputs.deploy-script }} \
-            --rpc-url "$RPC_URL" \
-            --broadcast \
-            --slow \
-            -vvvv
-
-      - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
-
-      - name: Parse deployment addresses
-        id: parse
-        run: |
-          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
-          if [[ -z "$BROADCAST_FILE" ]]; then
-            echo "No broadcast file found"
-            exit 1
-          fi
-          echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
-          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
-
-      - name: Verify contracts on Blockscout
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-        run: |
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
-            CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
-            CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
-            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
-            for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
-                --verifier blockscout \
-                --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --guess-constructor-args \
-                --watch; then
-                echo "✓ Verified $CONTRACT_NAME"
-                break
-              else
-                if [[ $attempt -lt 3 ]]; then
-                  echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
-                  sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
-                fi
-              fi
-            done
-          done
-
-      - name: Create deployment summary
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-        run: |
-          echo "## Mainnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
-          done < deployment-summary.txt
-
-  flatten-snapshots:
-    name: Flatten Snapshots
-    runs-on: ubuntu-latest
-    needs: [deploy-mainnet]
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Post-Mainnet: Flatten Snapshots & Create Release
+  # ─────────────────────────────────────────────────────────────────────────────
+  post-mainnet:
+    needs: [detect-changes, ci, upgrade-safety, deploy-mainnet]
     if: |
       always() &&
-      needs.deploy-mainnet.result == 'success' &&
-      inputs.flatten-contracts
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          token: ${{ secrets.GH_TOKEN || github.token }}
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Build contracts
-        run: forge build
-
-      - name: Extract and flatten contracts
-        env:
-          UPGRADES_PATH: ${{ inputs.upgrades-path }}
-        run: |
-          mkdir -p "${UPGRADES_PATH}/current"
-
-          CONTRACTS=$(find broadcast -name "run-latest.json" -type f -exec \
-            jq -r '.transactions[] | select(.transactionType == "CREATE") | "src/\(.contractName).sol"' {} \; 2>/dev/null | sort -u)
-
-          if [[ -z "$CONTRACTS" ]]; then
-            CONTRACTS=$(find src -maxdepth 1 -type f -name "*.sol")
-          fi
-
-          echo "$CONTRACTS" | while read -r contract; do
-            if [[ -f "$contract" ]]; then
-              name=$(basename "$contract")
-              echo "Flattening $contract..."
-              forge flatten "$contract" > "${UPGRADES_PATH}/current/$name"
-            fi
-          done
-
-      - name: Promote snapshots (3-tier rotation)
-        env:
-          UPGRADES_PATH: ${{ inputs.upgrades-path }}
-        run: |
-          if [[ -d "${UPGRADES_PATH}/baseline" ]] && ls ${UPGRADES_PATH}/baseline/*.sol 1> /dev/null 2>&1; then
-            echo "Baseline exists, performing 3-tier rotation..."
-            rm -rf "${UPGRADES_PATH}/previous"
-            cp -r "${UPGRADES_PATH}/baseline" "${UPGRADES_PATH}/previous"
-            rm -rf "${UPGRADES_PATH}/baseline"
-            cp -r "${UPGRADES_PATH}/current" "${UPGRADES_PATH}/baseline"
-            COMMIT_MSG="chore: auto-flatten contracts after deploy [skip ci]"
-          else
-            echo "No baseline found, initializing..."
-            mkdir -p "${UPGRADES_PATH}/baseline"
-            cp -r "${UPGRADES_PATH}/current/"* "${UPGRADES_PATH}/baseline/"
-            COMMIT_MSG="chore: init upgrade baseline [skip ci]"
-          fi
-          echo "commit_msg=$COMMIT_MSG" >> $GITHUB_ENV
-
-      - name: Commit flattened contracts
-        env:
-          UPGRADES_PATH: ${{ inputs.upgrades-path }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${UPGRADES_PATH}/" || true
-          if git diff --staged --quiet; then
-            echo "No snapshot changes to commit"
-          else
-            git commit -m "$commit_msg"
-            git push
-          fi
+      needs.detect-changes.outputs.should-run == 'true' &&
+      needs.ci.result == 'success' &&
+      (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
+      (needs.deploy-mainnet.result == 'success' ||
+       (needs.deploy-mainnet.result == 'skipped' && inputs.init-baseline-without-deploy)) &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    uses: BreadchainCoop/etherform/.github/workflows/_foundry-post-mainnet.yml@main
+    with:
+      flatten-contracts: ${{ inputs.flatten-contracts }}
+      create-release: ${{ inputs.create-release && needs.deploy-mainnet.result == 'success' }}
+      release-prefix: ${{ inputs.release-prefix }}
+      upgrades-path: ${{ inputs.upgrades-path }}
+      network-name: ${{ inputs.mainnet-name }}
+      blockscout-url: ${{ inputs.mainnet-blockscout-url }}
+      working-directory: ${{ inputs.working-directory }}
+    secrets:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}

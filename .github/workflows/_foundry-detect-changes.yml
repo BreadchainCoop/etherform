@@ -1,0 +1,75 @@
+# Detect smart contract changes
+# Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-detect-changes.yml@main
+name: Detect Changes
+
+on:
+  workflow_call:
+    inputs:
+      skip-if-no-changes:
+        description: 'Skip workflow if no smart contract files changed'
+        type: boolean
+        default: true
+      contract-paths:
+        description: 'Paths to check for changes (newline-separated glob patterns)'
+        type: string
+        default: |
+          src/**
+          script/**
+          test/**
+          lib/**
+          foundry.toml
+          remappings.txt
+      working-directory:
+        description: 'Working directory for change detection'
+        type: string
+        default: '.'
+    outputs:
+      should-run:
+        description: 'Whether the workflow should run'
+        value: ${{ jobs.detect.outputs.should-run }}
+      contracts-changed:
+        description: 'Whether contracts changed'
+        value: ${{ jobs.detect.outputs.contracts-changed }}
+
+jobs:
+  detect:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.decide.outputs.should-run }}
+      contracts-changed: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build paths filter
+        id: paths
+        run: |
+          # Convert newline-separated paths to YAML list format
+          YAML_PATHS=$(echo "${{ inputs.contract-paths }}" | sed '/^$/d' | sed 's/^/    - /')
+          echo "filter<<EOF" >> $GITHUB_OUTPUT
+          echo "contracts:" >> $GITHUB_OUTPUT
+          echo "$YAML_PATHS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Check for contract changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: ${{ steps.paths.outputs.filter }}
+
+      - name: Decide whether to run
+        id: decide
+        run: |
+          if [[ "${{ inputs.skip-if-no-changes }}" == "false" ]]; then
+            echo "Change detection disabled, workflow will run"
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.filter.outputs.contracts }}" == "true" ]]; then
+            echo "Contract changes detected, workflow will run"
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          else
+            echo "No contract changes detected, skipping workflow"
+            echo "should-run=false" >> $GITHUB_OUTPUT
+          fi
