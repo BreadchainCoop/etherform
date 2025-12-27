@@ -1,6 +1,6 @@
 # Foundry CI - Build, Test, Format Check, Compiler Validation
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-ci.yml@main
-name: Foundry CI
+name: Build & Test
 
 on:
   workflow_call:

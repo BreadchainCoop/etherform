@@ -1,6 +1,6 @@
 # Detect smart contract changes
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-detect-changes.yml@main
-name: Detect Changes
+name: Detect Contract Changes
 
 on:
   workflow_call:

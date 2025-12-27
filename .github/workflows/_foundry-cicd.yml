@@ -8,7 +8,7 @@
 #   - _foundry-upgrade-safety.yml - Upgrade safety validation
 #   - _foundry-deploy.yml - Deploy with verification
 #   - _foundry-post-mainnet.yml - Flatten snapshots and create release
-name: Foundry CI/CD
+name: CI/CD Pipeline
 
 on:
   workflow_call:

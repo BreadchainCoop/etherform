@@ -1,6 +1,6 @@
 # Foundry Post-Mainnet - Flatten snapshots and create release
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-post-mainnet.yml@main
-name: Post Mainnet
+name: Post-Deploy Snapshots
 
 on:
   workflow_call:

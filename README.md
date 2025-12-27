@@ -85,10 +85,6 @@ The upgrade safety workflow validates that contract upgrades don't break storage
 
 If no baseline exists, the check is skipped gracefully.
 
-## Example Project
-
-See [examples/foundry-counter](examples/foundry-counter) for a complete working example.
-
 ---
 
 # Development
@@ -106,61 +102,59 @@ etherform/
 │   ├── _foundry-detect-changes.yml # Change detection
 │   ├── _foundry-deploy.yml        # Deployment
 │   ├── _foundry-post-mainnet.yml  # Post-deploy tasks
-│   └── integration-test.yml       # Integration tests
-├── examples/
-│   └── foundry-counter/           # Test fixture (git submodule)
+│   └── test.yml                   # Run workflow logic tests
+├── scripts/                       # Extracted workflow logic
+│   ├── validate-compiler-config.sh
+│   └── detect-baseline.sh
+├── tests/                         # Test suites
+│   ├── fixtures/                  # Test fixtures (valid/invalid configs)
+│   ├── test-compiler-config.sh
+│   ├── test-baseline-detection.sh
+│   └── run-all.sh
 └── docs/
     └── specs/                     # Design specifications
 ```
 
-## How Integration Testing Works
+## Testing Approach
 
-The key insight: **workflow changes are tested BEFORE they affect external consumers**.
+The workflow logic is tested by **extracting testable shell functions** into standalone scripts, then running them against test fixtures that cover success and failure cases.
 
-### The Problem
+### Why This Approach?
 
-When consumers import workflows via `@main`:
-```yaml
-uses: BreadchainCoop/etherform/.github/workflows/_foundry-ci.yml@main
+1. **No external dependencies**: Tests run locally without needing a real Foundry project
+2. **Fast feedback**: Shell scripts run instantly vs. waiting for GitHub Actions
+3. **Complete coverage**: Can test failure cases that would be hard to trigger in integration tests
+4. **Reproducible**: Same tests run locally and in CI
+
+### Running Tests Locally
+
+```bash
+# Run all tests
+./tests/run-all.sh
+
+# Run specific test suite
+./tests/test-compiler-config.sh
+./tests/test-baseline-detection.sh
 ```
-
-Any breaking change pushed to `main` immediately affects all downstream projects.
-
-### The Solution
-
-The `integration-test.yml` workflow uses **local references** (`./`) instead of `@main`:
-
-```yaml
-jobs:
-  test-ci:
-    uses: ./.github/workflows/_foundry-ci.yml  # Uses current branch!
-    with:
-      working-directory: 'examples/foundry-counter'
-```
-
-This means:
-1. On a PR branch, tests run against the **PR's workflow files**
-2. The `examples/foundry-counter` submodule provides a real Foundry project to test against
-3. If tests pass, the workflow changes are validated before merging to `main`
 
 ### What Gets Tested
 
-| Test | Validates |
-|------|-----------|
-| Build | Contract compilation works |
-| Format Check | `forge fmt --check` execution |
-| Unit Tests | `forge test` runs successfully |
-| Compiler Config | `bytecode_hash`/`cbor_metadata` validation |
-| Upgrade Safety | Baseline detection and storage layout validation |
+| Test Suite | Validates |
+|------------|-----------|
+| `test-compiler-config.sh` | `bytecode_hash` and `cbor_metadata` validation |
+| `test-baseline-detection.sh` | Baseline directory detection and fallback logic |
 
-**Not tested**: Deployment (requires real RPC/keys and costs gas)
+### Test Fixtures
 
-### When Integration Tests Run
+Test fixtures are in `tests/fixtures/`:
 
-Tests trigger on changes to:
-- `.github/workflows/_foundry-*.yml` - Any workflow file
-- `.github/workflows/integration-test.yml` - The test workflow itself
-- `examples/foundry-counter/**` - The test fixture
+| Fixture | Purpose |
+|---------|---------|
+| `foundry-valid.toml` | Valid config (should pass) |
+| `foundry-missing-bytecode-hash.toml` | Missing required setting (should fail) |
+| `foundry-missing-cbor-metadata.toml` | Missing required setting (should fail) |
+| `foundry-wrong-bytecode-hash.toml` | Wrong value (should fail) |
+| `foundry-wrong-cbor-metadata.toml` | Wrong value (should fail) |
 
 ## Development Workflow
 
@@ -173,54 +167,42 @@ Tests trigger on changes to:
 
 2. **Make changes** to workflow files in `.github/workflows/`
 
-3. **Push and create PR**:
+3. **If adding new logic**, extract it to `scripts/` and add tests in `tests/`
+
+4. **Run tests locally**:
+   ```bash
+   ./tests/run-all.sh
+   ```
+
+5. **Push and create PR**:
    ```bash
    git push -u origin feature/my-workflow-change
    ```
 
-4. **Integration tests run automatically** against your branch's workflows
+6. **CI runs tests automatically** via `.github/workflows/test.yml`
 
-5. **If tests pass**, your changes are validated and safe to merge
+### Adding New Tests
 
-### Working with the Submodule
+1. Create a test fixture in `tests/fixtures/` if needed
+2. Extract the workflow logic to a script in `scripts/`
+3. Create a test script in `tests/test-<feature>.sh`
+4. Add the test to `tests/run-all.sh`
 
-The `examples/foundry-counter` directory is a git submodule pointing to:
-`https://github.com/BreadchainCoop/foundry-upgradeable-counter-example`
-
-**Clone with submodules**:
+Example test structure:
 ```bash
-git clone --recursive https://github.com/BreadchainCoop/etherform.git
+#!/bin/bash
+# tests/test-my-feature.sh
+
+run_test() {
+  local name="$1"
+  local expected_exit="$2"
+  # ... run script and check result
+}
+
+echo "Testing my feature..."
+run_test "Valid case" 0
+run_test "Invalid case" 1
 ```
-
-**Update submodule**:
-```bash
-git submodule update --remote examples/foundry-counter
-```
-
-**Make changes to the test fixture**:
-```bash
-cd examples/foundry-counter
-# Make changes, commit, push to the submodule repo
-cd ..
-git add examples/foundry-counter
-git commit -m "chore: update test fixture submodule"
-```
-
-### Testing Upgrade Safety Detection
-
-To verify upgrade safety detection works:
-
-1. In the submodule, add a storage variable BEFORE an existing one:
-   ```solidity
-   contract Counter {
-       address public owner;     // NEW - breaks storage layout!
-       uint256 public number;    // Was at slot 0, now at slot 1
-   }
-   ```
-
-2. Push and the integration test should FAIL (expected behavior)
-
-3. Revert the change to restore passing tests
 
 ## Architecture Decisions
 
@@ -240,23 +222,11 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
 ```
 
-This allows:
-- Testing against the submodule at `examples/foundry-counter`
-- Consumers with non-root Foundry projects (monorepos)
+This allows consumers with non-root Foundry projects (monorepos) to use these workflows.
 
-### Why Local `./` References in Integration Tests?
+### Why Extract Logic to Scripts?
 
-Using `./` instead of `@main` means:
-```yaml
-# Tests current branch's workflow files
-uses: ./.github/workflows/_foundry-ci.yml
-
-# Would test main branch (not useful for validation)
-# uses: BreadchainCoop/etherform/.github/workflows/_foundry-ci.yml@main
-```
-
-### Why a Git Submodule?
-
-- **Real project**: Tests run against actual Foundry code, not mocks
-- **Isolation**: Test fixture lives in its own repo
-- **Versioning**: Can pin to specific commits if needed
+Extracting logic to standalone scripts enables:
+- **Unit testing**: Test each piece of logic in isolation
+- **Reuse**: Same logic used in workflows and tests
+- **Debugging**: Run scripts locally to debug issues

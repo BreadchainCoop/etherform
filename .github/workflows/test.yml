@@ -1,0 +1,29 @@
+# Run etherform workflow logic tests
+# These tests validate the shell logic used in reusable workflows
+name: Tests
+
+on:
+  push:
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/_foundry-*.yml'
+      - '.github/workflows/test.yml'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/_foundry-*.yml'
+      - '.github/workflows/test.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Workflow Logic Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run tests
+        run: ./tests/run-all.sh
