@@ -1,0 +1,7 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+# Missing bytecode_hash = "none"
+cbor_metadata = false

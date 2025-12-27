@@ -1,6 +1,6 @@
 # Foundry Upgrade Safety Validation
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-upgrade-safety.yml@main
-name: Upgrade Safety
+name: Upgrade Safety Check
 
 on:
   workflow_call:

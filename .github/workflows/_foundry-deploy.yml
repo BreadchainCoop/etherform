@@ -1,6 +1,6 @@
 # Foundry Deploy - Deploy contracts with verification
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-deploy.yml@main
-name: Deploy
+name: Deploy & Verify
 
 on:
   workflow_call:

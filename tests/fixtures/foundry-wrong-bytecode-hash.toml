@@ -1,0 +1,8 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+# Wrong value - should be "none"
+bytecode_hash = "ipfs"
+cbor_metadata = false
