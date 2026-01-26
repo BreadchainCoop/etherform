@@ -30,6 +30,55 @@ jobs:
       - name: Show Forge version
         run: forge --version
 
+      - name: Validate foundry.toml configuration
+        run: |
+          set -euo pipefail
+          ERRORS=0
+
+          # Check for etherscan config with env vars that won't be set
+          if grep -q '\[etherscan\]' foundry.toml 2>/dev/null; then
+            # Check for ETHERSCAN_API_KEY references
+            if grep -E '\$\{?ETHERSCAN_API_KEY\}?' foundry.toml >/dev/null 2>&1; then
+              echo "::error::foundry.toml contains [etherscan] section referencing \${ETHERSCAN_API_KEY}"
+              echo ""
+              echo "This workflow uses Blockscout for verification instead of Etherscan."
+              echo "Remove or comment out the [etherscan] section from foundry.toml to fix this."
+              echo ""
+              echo "Example problematic config:"
+              grep -A5 '\[etherscan\]' foundry.toml || true
+              ERRORS=1
+            fi
+          fi
+
+          # Check bytecode_hash = "none" (required for deterministic bytecode)
+          if grep -q 'bytecode_hash\s*=\s*"none"' foundry.toml; then
+            echo "✓ bytecode_hash = \"none\""
+          else
+            echo "::error::foundry.toml must set bytecode_hash = \"none\" for deterministic bytecode"
+            ERRORS=1
+          fi
+
+          # Check cbor_metadata = false (required for deterministic bytecode)
+          if grep -q 'cbor_metadata\s*=\s*false' foundry.toml; then
+            echo "✓ cbor_metadata = false"
+          else
+            echo "::error::foundry.toml must set cbor_metadata = false for deterministic bytecode"
+            ERRORS=1
+          fi
+
+          if [[ $ERRORS -eq 1 ]]; then
+            echo ""
+            echo "Required foundry.toml settings for CI/CD:"
+            echo "  [profile.default]"
+            echo "  bytecode_hash = \"none\""
+            echo "  cbor_metadata = false"
+            echo ""
+            echo "And remove any [etherscan] sections that reference \${ETHERSCAN_API_KEY}"
+            exit 1
+          fi
+
+          echo "Configuration validated successfully"
+
       - name: Check formatting
         if: inputs.check-formatting
         run: forge fmt --check
