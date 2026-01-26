@@ -80,8 +80,11 @@ Create `.github/deploy-networks.json` in your repository:
 
 | Secret | Description |
 |--------|-------------|
-| `PRIVATE_KEY` | Deployer wallet private key |
-| `RPC_URL` | Network RPC endpoint |
+| `TESTNET_PRIVATE_KEY` | Deployer wallet private key for testnet |
+| `TESTNET_RPC_URL` | Testnet RPC endpoint |
+| `MAINNET_PRIVATE_KEY` | Deployer wallet private key for mainnet |
+| `MAINNET_RPC_URL` | Mainnet RPC endpoint |
+| `GH_TOKEN` | GitHub token for pushing commits (optional, for contract snapshots) |
 
 ## Workflow Inputs
 

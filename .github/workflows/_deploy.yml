@@ -1,10 +1,19 @@
-# Reusable mainnet deployment workflow with matrix support
-# Usage: jobs.<job>.uses: ./.github/workflows/_deploy-mainnet.yml
-name: Deploy Mainnet (Reusable)
+# Reusable deployment workflow for Foundry projects
+# Handles both testnet and mainnet deployments with optional matrix and snapshots
+# Usage: jobs.<job>.uses: ./.github/workflows/_deploy.yml
+name: Deploy (Reusable)
 
 on:
   workflow_call:
     inputs:
+      environment-type:
+        description: 'Environment type: testnet or mainnet'
+        type: string
+        required: true
+      network:
+        description: 'Specific network name to deploy to (leave empty for all networks of the environment type)'
+        type: string
+        default: ''
       deploy-script:
         description: 'Path to deployment script'
         type: string
@@ -13,18 +22,14 @@ on:
         description: 'Path to network configuration JSON'
         type: string
         default: '.github/deploy-networks.json'
-      network:
-        description: 'Specific network to deploy to (leave empty for all mainnets)'
-        type: string
-        default: ''
       indexing-wait:
         description: 'Seconds to wait for indexer before verification'
         type: number
         default: 60
-      flatten-contracts:
-        description: 'Flatten and commit contract snapshots after deploy'
+      enable-snapshots:
+        description: 'Flatten and commit contract snapshots after deploy (recommended for mainnet)'
         type: boolean
-        default: true
+        default: false
       upgrades-path:
         description: 'Path to store flattened contract snapshots'
         type: string
@@ -35,7 +40,7 @@ on:
       RPC_URL:
         required: true
       GH_TOKEN:
-        description: 'GitHub token for pushing commits (defaults to GITHUB_TOKEN)'
+        description: 'GitHub token for pushing commits (required if enable-snapshots is true)'
         required: false
 
 jobs:
@@ -44,6 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-networks: ${{ steps.set-matrix.outputs.has-networks }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,23 +57,48 @@ jobs:
       - name: Set deployment matrix
         id: set-matrix
         run: |
-          if [[ -n "${{ inputs.network }}" ]]; then
-            # Filter to specific network if provided
-            MATRIX=$(jq -c --arg net "${{ inputs.network }}" '{include: [.mainnets[] | select(.name == $net)]}' ${{ inputs.network-config-path }})
+          CONFIG_PATH="${{ inputs.network-config-path }}"
+          ENV_TYPE="${{ inputs.environment-type }}"
+          NETWORK="${{ inputs.network }}"
+
+          # Select array based on environment type
+          if [[ "$ENV_TYPE" == "mainnet" ]]; then
+            ARRAY_KEY="mainnets"
           else
-            # All mainnets
-            MATRIX=$(jq -c '{include: .mainnets}' ${{ inputs.network-config-path }})
+            ARRAY_KEY="testnets"
           fi
+
+          # Build matrix - filter to specific network if provided
+          if [[ -n "$NETWORK" ]]; then
+            MATRIX=$(jq -c --arg net "$NETWORK" --arg key "$ARRAY_KEY" \
+              '{include: [.[$key][] | select(.name == $net)]}' "$CONFIG_PATH")
+          else
+            MATRIX=$(jq -c --arg key "$ARRAY_KEY" '{include: .[$key]}' "$CONFIG_PATH")
+          fi
+
+          # Check if we have any networks to deploy to
+          NETWORK_COUNT=$(echo "$MATRIX" | jq '.include | length')
+          if [[ "$NETWORK_COUNT" -eq 0 ]]; then
+            echo "has-networks=false" >> $GITHUB_OUTPUT
+            echo "::warning::No networks found for environment type '$ENV_TYPE'"
+          else
+            echo "has-networks=true" >> $GITHUB_OUTPUT
+          fi
+
           echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "Deployment matrix: $MATRIX"
 
   deploy:
     name: Deploy to ${{ matrix.name }}
     runs-on: ubuntu-latest
     needs: [read-config]
+    if: needs.read-config.outputs.has-networks == 'true'
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.read-config.outputs.matrix) }}
     environment: ${{ matrix.environment }}
+    outputs:
+      deployed: ${{ steps.deploy.outcome == 'success' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -78,6 +109,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Deploy contracts
+        id: deploy
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
@@ -98,7 +130,6 @@ jobs:
       - name: Parse deployment addresses
         id: parse
         run: |
-          # Find the latest broadcast file
           BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
           if [[ -z "$BROADCAST_FILE" ]]; then
             echo "No broadcast file found"
@@ -106,8 +137,8 @@ jobs:
           fi
           echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
 
-          # Extract deployed contract addresses
-          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
+          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' \
+            "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
         env:
@@ -115,28 +146,26 @@ jobs:
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
 
-          # Extract and verify each deployed contract with retry logic
           jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
 
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
 
-            # Retry up to 3 times with exponential backoff
             for attempt in 1 2 3; do
               if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
                 --guess-constructor-args \
                 --watch; then
-                echo "✓ Verified $CONTRACT_NAME"
+                echo "Verified $CONTRACT_NAME"
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
                 else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
+                  echo "Verification pending for $CONTRACT_NAME after 3 attempts"
                 fi
               fi
             done
@@ -147,9 +176,8 @@ jobs:
           mkdir -p deployments/${{ matrix.name }}
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
 
-          # Extract contracts with proper sourcePathAndName format
-          jq '{contracts: [.transactions[] | select(.transactionType == "CREATE") | {sourcePathAndName: "src/\(.contractName).sol:\(.contractName)", address: .contractAddress}]}' "$BROADCAST_FILE" \
-            > deployments/${{ matrix.name }}/deployment.json
+          jq '{contracts: [.transactions[] | select(.transactionType == "CREATE") | {sourcePathAndName: "src/\(.contractName).sol:\(.contractName)", address: .contractAddress}]}' \
+            "$BROADCAST_FILE" > deployments/${{ matrix.name }}/deployment.json
 
       - name: Upload deployment artifacts
         uses: actions/upload-artifact@v4
@@ -176,7 +204,7 @@ jobs:
     name: Flatten & Commit Snapshots
     runs-on: ubuntu-latest
     needs: [deploy]
-    if: success() && inputs.flatten-contracts
+    if: success() && inputs.enable-snapshots
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -198,7 +226,6 @@ jobs:
       - name: Extract contract list from broadcast artifacts
         id: contracts
         run: |
-          # Find all run-latest.json files and extract unique contract source paths
           CONTRACTS=$(find broadcast -name "run-latest.json" -type f -exec \
             jq -r '.transactions[] | select(.transactionType == "CREATE") | "src/\(.contractName).sol"' {} \; 2>/dev/null | sort -u)
 
@@ -233,28 +260,24 @@ jobs:
         env:
           UPGRADES_PATH: ${{ inputs.upgrades-path }}
         run: |
-          # Check if baseline exists
           if [[ -d "${UPGRADES_PATH}/baseline" ]] && ls ${UPGRADES_PATH}/baseline/*.sol 1> /dev/null 2>&1; then
             echo "Baseline exists, performing 3-tier rotation..."
 
-            # Step 1: Copy baseline -> previous
             rm -rf "${UPGRADES_PATH}/previous"
             cp -r "${UPGRADES_PATH}/baseline" "${UPGRADES_PATH}/previous"
-            echo "✓ Copied baseline to previous"
+            echo "Copied baseline to previous"
 
-            # Step 2: Copy current -> baseline
             rm -rf "${UPGRADES_PATH}/baseline"
             cp -r "${UPGRADES_PATH}/current" "${UPGRADES_PATH}/baseline"
-            echo "✓ Copied current to baseline"
+            echo "Copied current to baseline"
 
-            COMMIT_MSG="chore: auto-flatten contracts after validation passes [skip ci]"
+            COMMIT_MSG="chore: auto-flatten contracts after deploy [skip ci]"
           else
             echo "No baseline found, initializing baseline from current..."
 
-            # Initialize baseline from current
             mkdir -p "${UPGRADES_PATH}/baseline"
             cp -r "${UPGRADES_PATH}/current/"* "${UPGRADES_PATH}/baseline/"
-            echo "✓ Initialized baseline from current"
+            echo "Initialized baseline from current"
 
             COMMIT_MSG="chore: init upgrade baseline [skip ci]"
           fi

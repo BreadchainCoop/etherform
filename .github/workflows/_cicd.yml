@@ -1,0 +1,221 @@
+# All-in-one Foundry CI/CD reusable workflow
+# Orchestrates CI, upgrade safety, and deployment workflows
+# Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_cicd.yml@main
+name: Foundry CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      # Change Detection Options
+      skip-if-no-changes:
+        description: 'Skip workflow if no smart contract files changed'
+        type: boolean
+        default: true
+      contract-paths:
+        description: 'Paths to check for changes (newline-separated glob patterns)'
+        type: string
+        default: |
+          src/**
+          script/**
+          test/**
+          lib/**
+          foundry.toml
+          remappings.txt
+
+      # CI Options
+      check-formatting:
+        description: 'Run forge fmt --check'
+        type: boolean
+        default: true
+      test-verbosity:
+        description: 'Test verbosity level (v, vv, vvv, vvvv)'
+        type: string
+        default: 'vvv'
+
+      # Upgrade Safety Options
+      run-upgrade-safety:
+        description: 'Run upgrade safety validation'
+        type: boolean
+        default: true
+      baseline-path:
+        description: 'Path to baseline contracts for upgrade comparison'
+        type: string
+        default: 'test/upgrades/baseline'
+      fallback-path:
+        description: 'Fallback path if baseline not found'
+        type: string
+        default: 'test/upgrades/previous'
+      validation-script:
+        description: 'Path to upgrade validation script'
+        type: string
+        default: 'script/upgrades/ValidateUpgrade.s.sol'
+
+      # Deploy Options
+      deploy-on-pr:
+        description: 'Deploy to testnet on pull request'
+        type: boolean
+        default: false
+      deploy-on-main:
+        description: 'Deploy to mainnet on push to main'
+        type: boolean
+        default: false
+      deploy-script:
+        description: 'Path to deployment script'
+        type: string
+        default: 'script/Deploy.s.sol:Deploy'
+      network-config-path:
+        description: 'Path to network configuration JSON'
+        type: string
+        default: '.github/deploy-networks.json'
+      indexing-wait:
+        description: 'Seconds to wait for indexer before verification'
+        type: number
+        default: 60
+      flatten-contracts:
+        description: 'Flatten and commit contract snapshots after mainnet deploy'
+        type: boolean
+        default: true
+      upgrades-path:
+        description: 'Path for flattened contract snapshots'
+        type: string
+        default: 'test/upgrades'
+
+    secrets:
+      TESTNET_PRIVATE_KEY:
+        description: 'Deployer wallet private key for testnet'
+        required: false
+      TESTNET_RPC_URL:
+        description: 'Testnet RPC endpoint'
+        required: false
+      MAINNET_PRIVATE_KEY:
+        description: 'Deployer wallet private key for mainnet'
+        required: false
+      MAINNET_RPC_URL:
+        description: 'Mainnet RPC endpoint'
+        required: false
+      GH_TOKEN:
+        description: 'GitHub token for pushing commits'
+        required: false
+
+jobs:
+  # ============================================
+  # Change Detection
+  # ============================================
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      contracts-changed: ${{ steps.filter.outputs.contracts }}
+      should-run: ${{ steps.decide.outputs.should-run }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build paths filter
+        id: paths
+        run: |
+          YAML_PATHS=$(echo "${{ inputs.contract-paths }}" | sed '/^$/d' | sed 's/^/    - /')
+          echo "filter<<EOF" >> $GITHUB_OUTPUT
+          echo "contracts:" >> $GITHUB_OUTPUT
+          echo "$YAML_PATHS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Check for contract changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: ${{ steps.paths.outputs.filter }}
+
+      - name: Decide whether to run
+        id: decide
+        run: |
+          if [[ "${{ inputs.skip-if-no-changes }}" == "false" ]]; then
+            echo "Change detection disabled, workflow will run"
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ steps.filter.outputs.contracts }}" == "true" ]]; then
+            echo "Contract changes detected, workflow will run"
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          else
+            echo "No contract changes detected, skipping workflow"
+            echo "should-run=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================
+  # CI: Build & Test
+  # ============================================
+  ci:
+    name: Build & Test
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.should-run == 'true'
+    uses: ./.github/workflows/_ci.yml
+    with:
+      check-formatting: ${{ inputs.check-formatting }}
+      test-verbosity: ${{ inputs.test-verbosity }}
+
+  # ============================================
+  # Upgrade Safety Validation
+  # ============================================
+  upgrade-safety:
+    name: Upgrade Safety
+    needs: [detect-changes, ci]
+    if: |
+      needs.detect-changes.outputs.should-run == 'true' &&
+      inputs.run-upgrade-safety
+    uses: ./.github/workflows/_upgrade-safety.yml
+    with:
+      baseline-path: ${{ inputs.baseline-path }}
+      fallback-path: ${{ inputs.fallback-path }}
+      validation-script: ${{ inputs.validation-script }}
+
+  # ============================================
+  # Deploy: Testnet (on PR)
+  # ============================================
+  deploy-testnet:
+    name: Deploy Testnet
+    needs: [detect-changes, ci, upgrade-safety]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.should-run == 'true' &&
+      needs.ci.result == 'success' &&
+      (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
+      inputs.deploy-on-pr &&
+      github.event_name == 'pull_request'
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      environment-type: testnet
+      deploy-script: ${{ inputs.deploy-script }}
+      network-config-path: ${{ inputs.network-config-path }}
+      indexing-wait: ${{ inputs.indexing-wait }}
+      enable-snapshots: false
+    secrets:
+      PRIVATE_KEY: ${{ secrets.TESTNET_PRIVATE_KEY }}
+      RPC_URL: ${{ secrets.TESTNET_RPC_URL }}
+
+  # ============================================
+  # Deploy: Mainnet (on push to main)
+  # ============================================
+  deploy-mainnet:
+    name: Deploy Mainnet
+    needs: [detect-changes, ci, upgrade-safety]
+    if: |
+      always() &&
+      needs.detect-changes.outputs.should-run == 'true' &&
+      needs.ci.result == 'success' &&
+      (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
+      inputs.deploy-on-main &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/_deploy.yml
+    with:
+      environment-type: mainnet
+      deploy-script: ${{ inputs.deploy-script }}
+      network-config-path: ${{ inputs.network-config-path }}
+      indexing-wait: ${{ inputs.indexing-wait }}
+      enable-snapshots: ${{ inputs.flatten-contracts }}
+      upgrades-path: ${{ inputs.upgrades-path }}
+    secrets:
+      PRIVATE_KEY: ${{ secrets.MAINNET_PRIVATE_KEY }}
+      RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
