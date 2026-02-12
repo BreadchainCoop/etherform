@@ -1,6 +1,6 @@
 # Reusable CI workflow for Foundry projects
 # Usage: jobs.<job>.uses: ./.github/workflows/_ci.yml
-name: CI (Reusable)
+name: Build & Test (Reusable)
 
 on:
   workflow_call:
@@ -13,6 +13,22 @@ on:
         description: 'Test verbosity level (v, vv, vvv, vvvv)'
         type: string
         default: 'vvv'
+      foundry-profile:
+        description: 'Foundry profile to use for building/testing (leave empty for default)'
+        type: string
+        default: ''
+      run-slither:
+        description: 'Run Slither static analysis'
+        type: boolean
+        default: false
+      slither-fail-on:
+        description: 'Slither severity level to fail on (low, medium, high)'
+        type: string
+        default: 'medium'
+      slither-config:
+        description: 'Path to Slither configuration file'
+        type: string
+        default: 'slither.config.json'
 
 jobs:
   check:
@@ -36,6 +52,40 @@ jobs:
 
       - name: Build contracts
         run: forge build
+        env:
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
 
       - name: Run tests
         run: forge test -${{ inputs.test-verbosity }}
+        env:
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
+
+  slither:
+    name: Slither Analysis
+    runs-on: ubuntu-latest
+    if: inputs.run-slither
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build with Forge
+        run: forge build
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          fail-on: ${{ inputs.slither-fail-on }}
+          slither-config: ${{ inputs.slither-config }}
+          sarif: results.sarif
+
+      - name: Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true

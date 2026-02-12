@@ -1,6 +1,6 @@
 # Reusable testnet deployment workflow
 # Usage: jobs.<job>.uses: ./.github/workflows/_deploy-testnet.yml
-name: Deploy Testnet (Reusable)
+name: Deploy & Verify Testnet (Reusable)
 
 on:
   workflow_call:
@@ -21,11 +21,22 @@ on:
         description: 'Seconds to wait for indexer before verification'
         type: number
         default: 60
+      verify-contracts:
+        description: 'Run Blockscout contract verification after deployment'
+        type: boolean
+        default: true
+      foundry-profile:
+        description: 'Foundry profile to use for deployment (leave empty for default)'
+        type: string
+        default: ''
     secrets:
       PRIVATE_KEY:
         required: true
       RPC_URL:
         required: true
+      ADMIN_ADDRESS:
+        description: 'Optional admin address for upgradeable contract deploy scripts'
+        required: false
 
 jobs:
   deploy-testnet:
@@ -43,10 +54,18 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
+      - name: Validate Foundry profile
+        if: inputs.foundry-profile != ''
+        run: |
+          if ! grep -q "\[profile\.${{ inputs.foundry-profile }}\]" foundry.toml 2>/dev/null; then
+            echo "::error::Foundry profile '${{ inputs.foundry-profile }}' not found in foundry.toml"
+            exit 1
+          fi
+
       - name: Read network config
         id: network
         run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[${{ inputs.network-index }}].blockscout_url' ${{ inputs.network-config-path }})
+          BLOCKSCOUT_URL=$(jq -r '.testnets[${{ inputs.network-index }}].blockscout_url // ""' ${{ inputs.network-config-path }})
           NETWORK_NAME=$(jq -r '.testnets[${{ inputs.network-index }}].name' ${{ inputs.network-config-path }})
           echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
           echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
@@ -55,6 +74,8 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          ADMIN_ADDRESS: ${{ secrets.ADMIN_ADDRESS }}
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
         run: |
           # Ensure PRIVATE_KEY has 0x prefix
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
@@ -84,38 +105,69 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
+        if: inputs.verify-contracts
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
 
-          # Extract and verify each deployed contract with retry logic
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+          # Skip if no Blockscout URL configured
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::warning::No Blockscout URL configured, skipping verification"
+            exit 0
+          fi
+
+          # Validate Blockscout URL format
+          if ! echo "$BLOCKSCOUT_URL" | grep -qE '^https?://[a-zA-Z0-9.-]+'; then
+            echo "::error::Invalid Blockscout URL format: $BLOCKSCOUT_URL"
+            exit 1
+          fi
+
+          FAILED=0
+
+          # Use process substitution to propagate failures
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
 
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
 
-            # Retry up to 3 times with exponential backoff
-            # Use --guess-constructor-args to auto-detect from on-chain bytecode
+            VERIFIED=0
             for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
+              # Capture output and use timeout to prevent hanging
+              VERIFY_OUTPUT=$(timeout 120 forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
                 --guess-constructor-args \
-                --watch; then
+                --watch 2>&1) || true
+              echo "$VERIFY_OUTPUT"
+
+              # Check for actual verification success (not just exit code)
+              if echo "$VERIFY_OUTPUT" | grep -qiE "Contract successfully verified|Pass - Verified"; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=1
+                break
+              elif echo "$VERIFY_OUTPUT" | grep -qi "Already Verified"; then
+                echo "✓ $CONTRACT_NAME already verified"
+                VERIFIED=1
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
                 else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
+                  echo "::warning::Verification failed for $CONTRACT_NAME after 3 attempts"
+                  FAILED=1
                 fi
               fi
             done
-          done
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ $FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Save deployment artifacts
         run: |
@@ -136,13 +188,34 @@ jobs:
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
         run: |
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+
           echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract | Address | Constructor Args | Explorer |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|------------------|----------|" >> $GITHUB_STEP_SUMMARY
 
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
-          done < deployment-summary.txt
+          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName)|\(.contractAddress)|\(.arguments // [] | join(", "))"' "$BROADCAST_FILE" | while IFS='|' read -r CONTRACT ADDRESS ARGS; do
+            if [[ -n "$BLOCKSCOUT_URL" && "$BLOCKSCOUT_URL" != "null" ]]; then
+              EXPLORER="[View](${BLOCKSCOUT_URL}/address/$ADDRESS)"
+            else
+              EXPLORER="-"
+            fi
+            echo "| $CONTRACT | \`$ADDRESS\` | ${ARGS:--} | $EXPLORER |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          # Method calls section
+          CALLS=$(jq -r '.transactions[] | select(.transactionType == "CALL") | "\(.contractName)|\(.function // "unknown")|\(.arguments // [] | join(", "))"' "$BROADCAST_FILE" 2>/dev/null)
+          if [[ -n "$CALLS" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>Method Calls</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Contract | Method | Arguments |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+            echo "$CALLS" | while IFS='|' read -r CONTRACT METHOD ARGS; do
+              echo "| $CONTRACT | \`$METHOD\` | ${ARGS:--} |" >> $GITHUB_STEP_SUMMARY
+            done
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi

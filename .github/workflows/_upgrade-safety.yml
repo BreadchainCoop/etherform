@@ -1,6 +1,6 @@
 # Reusable upgrade safety validation workflow
 # Usage: jobs.<job>.uses: ./.github/workflows/_upgrade-safety.yml
-name: Upgrade Safety (Reusable)
+name: Upgrade Safety Check (Reusable)
 
 on:
   workflow_call:
@@ -17,6 +17,10 @@ on:
         description: 'Path to validation script'
         type: string
         default: 'script/upgrades/ValidateUpgrade.s.sol'
+      foundry-profile:
+        description: 'Foundry profile to use (leave empty for default)'
+        type: string
+        default: ''
 
 jobs:
   upgrade-safety:
@@ -32,6 +36,8 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Run upgrade safety validation
+        env:
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
         run: |
           forge clean && forge build
 

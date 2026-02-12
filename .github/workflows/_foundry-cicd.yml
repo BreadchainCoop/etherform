@@ -1,6 +1,6 @@
 # All-in-one Foundry CI/CD reusable workflow
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-cicd.yml@main
-name: Foundry CI/CD
+name: CI/CD Pipeline
 
 on:
   workflow_call:
@@ -30,6 +30,24 @@ on:
         description: 'Test verbosity level (v, vv, vvv, vvvv)'
         type: string
         default: 'vvv'
+      foundry-profile:
+        description: 'Foundry profile to use for deployment/build (leave empty for default)'
+        type: string
+        default: ''
+
+      # Slither Options
+      run-slither:
+        description: 'Run Slither static analysis'
+        type: boolean
+        default: false
+      slither-fail-on:
+        description: 'Slither severity level to fail on (low, medium, high)'
+        type: string
+        default: 'medium'
+      slither-config:
+        description: 'Path to Slither configuration file'
+        type: string
+        default: 'slither.config.json'
 
       # Upgrade Safety Options
       run-upgrade-safety:
@@ -66,6 +84,10 @@ on:
         description: 'Seconds to wait for indexer before verification'
         type: number
         default: 60
+      verify-contracts:
+        description: 'Run Blockscout contract verification after deployment'
+        type: boolean
+        default: true
       flatten-contracts:
         description: 'Flatten and commit contract snapshots after mainnet deploy'
         type: boolean
@@ -82,13 +104,16 @@ on:
       RPC_URL:
         description: 'Network RPC endpoint'
         required: false
+      ADMIN_ADDRESS:
+        description: 'Optional admin address for upgradeable contract deploy scripts'
+        required: false
       GH_TOKEN:
         description: 'GitHub token for pushing commits'
         required: false
 
 jobs:
   detect-changes:
-    name: Detect Changes
+    name: Detect Contract Changes
     runs-on: ubuntu-latest
     outputs:
       contracts-changed: ${{ steps.filter.outputs.contracts }}
@@ -146,18 +171,69 @@ jobs:
       - name: Show Forge version
         run: forge --version
 
+      - name: Validate Foundry profile
+        if: inputs.foundry-profile != ''
+        run: |
+          if ! grep -q "\[profile\.${{ inputs.foundry-profile }}\]" foundry.toml 2>/dev/null; then
+            echo "::error::Foundry profile '${{ inputs.foundry-profile }}' not found in foundry.toml"
+            exit 1
+          fi
+
+      - name: Validate foundry.toml configuration
+        run: |
+          if grep -q 'ETHERSCAN_API_KEY' foundry.toml 2>/dev/null; then
+            echo "::warning::foundry.toml references ETHERSCAN_API_KEY which is not available in this workflow. Blockscout is used for verification."
+          fi
+
       - name: Check formatting
         if: inputs.check-formatting
         run: forge fmt --check
 
       - name: Build contracts
         run: forge build
+        env:
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
 
       - name: Run tests
         run: forge test -${{ inputs.test-verbosity }}
+        env:
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
+
+  slither:
+    name: Slither Analysis
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: |
+      needs.detect-changes.outputs.should-run == 'true' &&
+      inputs.run-slither
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build with Forge
+        run: forge build
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          fail-on: ${{ inputs.slither-fail-on }}
+          slither-config: ${{ inputs.slither-config }}
+          sarif: results.sarif
+
+      - name: Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true
 
   upgrade-safety:
-    name: Upgrade Safety
+    name: Upgrade Safety Check
     runs-on: ubuntu-latest
     needs: [detect-changes, ci]
     if: |
@@ -173,6 +249,8 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Run upgrade safety validation
+        env:
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
         run: |
           forge clean && forge build
 
@@ -191,7 +269,7 @@ jobs:
           fi
 
   deploy-testnet:
-    name: Deploy Testnet
+    name: Deploy & Verify Testnet
     runs-on: ubuntu-latest
     needs: [detect-changes, ci, upgrade-safety]
     if: |
@@ -213,7 +291,7 @@ jobs:
       - name: Read network config
         id: network
         run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' ${{ inputs.network-config-path }})
+          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url // ""' ${{ inputs.network-config-path }})
           NETWORK_NAME=$(jq -r '.testnets[0].name' ${{ inputs.network-config-path }})
           echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
           echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
@@ -222,6 +300,8 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          ADMIN_ADDRESS: ${{ secrets.ADMIN_ADDRESS }}
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
         run: |
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
             export PRIVATE_KEY="0x$PRIVATE_KEY"
@@ -247,49 +327,103 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
+        if: inputs.verify-contracts
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+
+          # Skip if no Blockscout URL configured
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::warning::No Blockscout URL configured, skipping verification"
+            exit 0
+          fi
+
+          # Validate Blockscout URL format
+          if ! echo "$BLOCKSCOUT_URL" | grep -qE '^https?://[a-zA-Z0-9.-]+'; then
+            echo "::error::Invalid Blockscout URL format: $BLOCKSCOUT_URL"
+            exit 1
+          fi
+
+          FAILED=0
+
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            VERIFIED=0
             for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
+              VERIFY_OUTPUT=$(timeout 120 forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
                 --guess-constructor-args \
-                --watch; then
+                --watch 2>&1) || true
+              echo "$VERIFY_OUTPUT"
+
+              if echo "$VERIFY_OUTPUT" | grep -qiE "Contract successfully verified|Pass - Verified"; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=1
+                break
+              elif echo "$VERIFY_OUTPUT" | grep -qi "Already Verified"; then
+                echo "✓ $CONTRACT_NAME already verified"
+                VERIFIED=1
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
                 else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
+                  echo "::warning::Verification failed for $CONTRACT_NAME after 3 attempts"
+                  FAILED=1
                 fi
               fi
             done
-          done
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ $FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
         run: |
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+
           echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
-          done < deployment-summary.txt
+          echo "| Contract | Address | Constructor Args | Explorer |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|------------------|----------|" >> $GITHUB_STEP_SUMMARY
+
+          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName)|\(.contractAddress)|\(.arguments // [] | join(", "))"' "$BROADCAST_FILE" | while IFS='|' read -r CONTRACT ADDRESS ARGS; do
+            if [[ -n "$BLOCKSCOUT_URL" && "$BLOCKSCOUT_URL" != "null" ]]; then
+              EXPLORER="[View](${BLOCKSCOUT_URL}/address/$ADDRESS)"
+            else
+              EXPLORER="-"
+            fi
+            echo "| $CONTRACT | \`$ADDRESS\` | ${ARGS:--} | $EXPLORER |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          CALLS=$(jq -r '.transactions[] | select(.transactionType == "CALL") | "\(.contractName)|\(.function // "unknown")|\(.arguments // [] | join(", "))"' "$BROADCAST_FILE" 2>/dev/null)
+          if [[ -n "$CALLS" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>Method Calls</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Contract | Method | Arguments |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+            echo "$CALLS" | while IFS='|' read -r CONTRACT METHOD ARGS; do
+              echo "| $CONTRACT | \`$METHOD\` | ${ARGS:--} |" >> $GITHUB_STEP_SUMMARY
+            done
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
 
   deploy-mainnet:
-    name: Deploy Mainnet
+    name: Deploy & Verify Mainnet
     runs-on: ubuntu-latest
     needs: [detect-changes, ci, upgrade-safety]
     if: |
@@ -312,7 +446,7 @@ jobs:
       - name: Read network config
         id: network
         run: |
-          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' ${{ inputs.network-config-path }})
+          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url // ""' ${{ inputs.network-config-path }})
           NETWORK_NAME=$(jq -r '.mainnets[0].name' ${{ inputs.network-config-path }})
           ENVIRONMENT=$(jq -r '.mainnets[0].environment' ${{ inputs.network-config-path }})
           echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
@@ -323,6 +457,8 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          ADMIN_ADDRESS: ${{ secrets.ADMIN_ADDRESS }}
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
         run: |
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
             export PRIVATE_KEY="0x$PRIVATE_KEY"
@@ -348,49 +484,101 @@ jobs:
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
       - name: Verify contracts on Blockscout
+        if: inputs.verify-contracts
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
+
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::warning::No Blockscout URL configured, skipping verification"
+            exit 0
+          fi
+
+          if ! echo "$BLOCKSCOUT_URL" | grep -qE '^https?://[a-zA-Z0-9.-]+'; then
+            echo "::error::Invalid Blockscout URL format: $BLOCKSCOUT_URL"
+            exit 1
+          fi
+
+          FAILED=0
+
+          while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
             echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+
+            VERIFIED=0
             for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
+              VERIFY_OUTPUT=$(timeout 120 forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \
                 --guess-constructor-args \
-                --watch; then
+                --watch 2>&1) || true
+              echo "$VERIFY_OUTPUT"
+
+              if echo "$VERIFY_OUTPUT" | grep -qiE "Contract successfully verified|Pass - Verified"; then
                 echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=1
+                break
+              elif echo "$VERIFY_OUTPUT" | grep -qi "Already Verified"; then
+                echo "✓ $CONTRACT_NAME already verified"
+                VERIFIED=1
                 break
               else
                 if [[ $attempt -lt 3 ]]; then
                   echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
                   sleep $((attempt * 30))
                 else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
+                  echo "::warning::Verification failed for $CONTRACT_NAME after 3 attempts"
+                  FAILED=1
                 fi
               fi
             done
-          done
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ $FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
         run: |
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+
           echo "## Mainnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
-          done < deployment-summary.txt
+          echo "| Contract | Address | Constructor Args | Explorer |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|------------------|----------|" >> $GITHUB_STEP_SUMMARY
+
+          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName)|\(.contractAddress)|\(.arguments // [] | join(", "))"' "$BROADCAST_FILE" | while IFS='|' read -r CONTRACT ADDRESS ARGS; do
+            if [[ -n "$BLOCKSCOUT_URL" && "$BLOCKSCOUT_URL" != "null" ]]; then
+              EXPLORER="[View](${BLOCKSCOUT_URL}/address/$ADDRESS)"
+            else
+              EXPLORER="-"
+            fi
+            echo "| $CONTRACT | \`$ADDRESS\` | ${ARGS:--} | $EXPLORER |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          CALLS=$(jq -r '.transactions[] | select(.transactionType == "CALL") | "\(.contractName)|\(.function // "unknown")|\(.arguments // [] | join(", "))"' "$BROADCAST_FILE" 2>/dev/null)
+          if [[ -n "$CALLS" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>Method Calls</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Contract | Method | Arguments |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|--------|-----------|" >> $GITHUB_STEP_SUMMARY
+            echo "$CALLS" | while IFS='|' read -r CONTRACT METHOD ARGS; do
+              echo "| $CONTRACT | \`$METHOD\` | ${ARGS:--} |" >> $GITHUB_STEP_SUMMARY
+            done
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
 
   flatten-snapshots:
-    name: Flatten Snapshots
+    name: Post-Deploy Snapshots
     runs-on: ubuntu-latest
     needs: [deploy-mainnet]
     if: |
@@ -409,10 +597,13 @@ jobs:
 
       - name: Build contracts
         run: forge build
+        env:
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
 
       - name: Extract and flatten contracts
         env:
           UPGRADES_PATH: ${{ inputs.upgrades-path }}
+          FOUNDRY_PROFILE: ${{ inputs.foundry-profile || 'default' }}
         run: |
           mkdir -p "${UPGRADES_PATH}/current"
 
