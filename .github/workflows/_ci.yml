@@ -13,6 +13,18 @@ on:
         description: 'Test verbosity level (v, vv, vvv, vvvv)'
         type: string
         default: 'vvv'
+      run-slither:
+        description: 'Run Slither static analysis'
+        type: boolean
+        default: false
+      slither-fail-on:
+        description: 'Minimum severity to fail on (low, medium, high)'
+        type: string
+        default: 'high'
+      slither-config:
+        description: 'Path to slither.config.json'
+        type: string
+        default: 'slither.config.json'
 
 jobs:
   check:
@@ -39,3 +51,25 @@ jobs:
 
       - name: Run tests
         run: forge test -${{ inputs.test-verbosity }}
+
+  slither:
+    name: Slither Analysis
+    runs-on: ubuntu-latest
+    if: inputs.run-slither
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build for Slither
+        run: forge build --build-info --skip '*/test/**' '*/script/**' --force
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          slither-config: ${{ inputs.slither-config }}
+          fail-on: ${{ inputs.slither-fail-on }}
