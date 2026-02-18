@@ -80,6 +80,10 @@ on:
         description: 'Seconds to wait for indexer before verification'
         type: number
         default: 60
+      verify-contracts:
+        description: 'Verify deployed contracts on Blockscout'
+        type: boolean
+        default: true
       flatten-contracts:
         description: 'Flatten and commit contract snapshots after mainnet deploy'
         type: boolean
@@ -285,37 +289,10 @@ jobs:
           echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
-      - name: Verify contracts on Blockscout
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-        run: |
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
-            CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
-            CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
-            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
-            for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
-                --verifier blockscout \
-                --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --guess-constructor-args \
-                --watch; then
-                echo "✓ Verified $CONTRACT_NAME"
-                break
-              else
-                if [[ $attempt -lt 3 ]]; then
-                  echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
-                  sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
-                fi
-              fi
-            done
-          done
-
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -326,6 +303,63 @@ jobs:
             ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
             echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
           done < deployment-summary.txt
+
+      - name: Verify contracts on Blockscout
+        if: inputs.verify-contracts
+        env:
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
+        run: |
+          # Validate Blockscout URL format (fail fast on bad URL)
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::error::BLOCKSCOUT_URL is empty or not configured. Check deploy-networks.json."
+            exit 1
+          fi
+          if [[ ! "$BLOCKSCOUT_URL" =~ ^https?:// ]]; then
+            echo "::error::BLOCKSCOUT_URL has invalid format (got: '$BLOCKSCOUT_URL'). Must start with http:// or https://."
+            exit 1
+          fi
+
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          VERIFY_FAILED=0
+
+          while read -r tx; do
+            CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
+            CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
+            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+            VERIFIED=0
+            for attempt in 1 2 3; do
+              VERIFY_OUTPUT=$(timeout 120 forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
+                --verifier blockscout \
+                --verifier-url "${BLOCKSCOUT_URL}/api" \
+                --guess-constructor-args \
+                --watch 2>&1) || true
+              echo "$VERIFY_OUTPUT"
+              if echo "$VERIFY_OUTPUT" | grep -qi "Contract successfully verified\|Pass - Verified"; then
+                echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=1
+                break
+              elif echo "$VERIFY_OUTPUT" | grep -qi "Already Verified"; then
+                echo "✓ $CONTRACT_NAME already verified"
+                VERIFIED=1
+                break
+              else
+                if [[ $attempt -lt 3 ]]; then
+                  echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
+                  sleep $((attempt * 30))
+                fi
+              fi
+            done
+            if [[ $VERIFIED -eq 0 ]]; then
+              echo "::error::Verification failed for $CONTRACT_NAME after 3 attempts"
+              VERIFY_FAILED=1
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ $VERIFY_FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
   deploy-mainnet:
     name: Deploy Mainnet
@@ -386,37 +420,10 @@ jobs:
           echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
-      - name: Verify contracts on Blockscout
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-        run: |
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE" | while read -r tx; do
-            CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
-            CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
-            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
-            for attempt in 1 2 3; do
-              if forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
-                --verifier blockscout \
-                --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --guess-constructor-args \
-                --watch; then
-                echo "✓ Verified $CONTRACT_NAME"
-                break
-              else
-                if [[ $attempt -lt 3 ]]; then
-                  echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
-                  sleep $((attempt * 30))
-                else
-                  echo "⚠ Verification pending for $CONTRACT_NAME after 3 attempts"
-                fi
-              fi
-            done
-          done
-
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           echo "## Mainnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -427,6 +434,63 @@ jobs:
             ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
             echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
           done < deployment-summary.txt
+
+      - name: Verify contracts on Blockscout
+        if: inputs.verify-contracts
+        env:
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
+        run: |
+          # Validate Blockscout URL format (fail fast on bad URL)
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::error::BLOCKSCOUT_URL is empty or not configured. Check deploy-networks.json."
+            exit 1
+          fi
+          if [[ ! "$BLOCKSCOUT_URL" =~ ^https?:// ]]; then
+            echo "::error::BLOCKSCOUT_URL has invalid format (got: '$BLOCKSCOUT_URL'). Must start with http:// or https://."
+            exit 1
+          fi
+
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          VERIFY_FAILED=0
+
+          while read -r tx; do
+            CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
+            CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
+            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
+            VERIFIED=0
+            for attempt in 1 2 3; do
+              VERIFY_OUTPUT=$(timeout 120 forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
+                --verifier blockscout \
+                --verifier-url "${BLOCKSCOUT_URL}/api" \
+                --guess-constructor-args \
+                --watch 2>&1) || true
+              echo "$VERIFY_OUTPUT"
+              if echo "$VERIFY_OUTPUT" | grep -qi "Contract successfully verified\|Pass - Verified"; then
+                echo "✓ Verified $CONTRACT_NAME"
+                VERIFIED=1
+                break
+              elif echo "$VERIFY_OUTPUT" | grep -qi "Already Verified"; then
+                echo "✓ $CONTRACT_NAME already verified"
+                VERIFIED=1
+                break
+              else
+                if [[ $attempt -lt 3 ]]; then
+                  echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
+                  sleep $((attempt * 30))
+                fi
+              fi
+            done
+            if [[ $VERIFIED -eq 0 ]]; then
+              echo "::error::Verification failed for $CONTRACT_NAME after 3 attempts"
+              VERIFY_FAILED=1
+            fi
+          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+
+          if [[ $VERIFY_FAILED -eq 1 ]]; then
+            echo "::error::One or more contracts failed verification"
+            exit 1
+          fi
 
   flatten-snapshots:
     name: Flatten Snapshots
