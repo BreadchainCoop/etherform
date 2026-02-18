@@ -131,6 +131,7 @@ jobs:
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ matrix.blockscout_url }}
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           echo "## ${{ matrix.name }} Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -147,6 +148,7 @@ jobs:
         if: inputs.verify-contracts
         env:
           BLOCKSCOUT_URL: ${{ matrix.blockscout_url }}
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           # Validate Blockscout URL format (fail fast on bad URL)
           if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
