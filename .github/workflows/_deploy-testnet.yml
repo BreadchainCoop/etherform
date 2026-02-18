@@ -87,6 +87,36 @@ jobs:
           # Extract deployed contract addresses
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
 
+      - name: Save deployment artifacts
+        run: |
+          mkdir -p deployments/${{ steps.network.outputs.network_name }}
+          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+
+          # Extract contracts with proper sourcePathAndName format
+          jq '{contracts: [.transactions[] | select(.transactionType == "CREATE") | {sourcePathAndName: "src/\(.contractName).sol:\(.contractName)", address: .contractAddress}]}' "$BROADCAST_FILE" \
+            > deployments/${{ steps.network.outputs.network_name }}/deployment.json
+
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ steps.network.outputs.network_name }}
+          path: deployments/
+
+      - name: Create deployment summary
+        env:
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+        run: |
+          echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
+
+          while read -r line; do
+            CONTRACT=$(echo "$line" | cut -d: -f1)
+            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
+            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
+          done < deployment-summary.txt
+
       - name: Verify contracts on Blockscout
         if: inputs.verify-contracts
         env:
@@ -149,33 +179,3 @@ jobs:
             echo "::error::One or more contracts failed verification"
             exit 1
           fi
-
-      - name: Save deployment artifacts
-        run: |
-          mkdir -p deployments/${{ steps.network.outputs.network_name }}
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-
-          # Extract contracts with proper sourcePathAndName format
-          jq '{contracts: [.transactions[] | select(.transactionType == "CREATE") | {sourcePathAndName: "src/\(.contractName).sol:\(.contractName)", address: .contractAddress}]}' "$BROADCAST_FILE" \
-            > deployments/${{ steps.network.outputs.network_name }}/deployment.json
-
-      - name: Upload deployment artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-${{ steps.network.outputs.network_name }}
-          path: deployments/
-
-      - name: Create deployment summary
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-        run: |
-          echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
-
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
-          done < deployment-summary.txt
