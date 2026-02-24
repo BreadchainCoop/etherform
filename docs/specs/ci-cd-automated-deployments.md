@@ -692,6 +692,14 @@ flowchart TD
         J -->|Pass| K[Success]
         J -->|Fail| X
     end
+
+    subgraph "Job: coverage (opt-in)"
+        B --> COV1[Checkout Repository]
+        COV1 --> COV2[Install Foundry]
+        COV2 --> COV3[forge coverage]
+        COV3 --> COV4[Extract summary table]
+        COV4 --> COV5[Post sticky PR comment]
+    end
 ```
 
 ---
@@ -707,4 +715,5 @@ flowchart TD
 | **Verifier** | Blockscout | Blockscout | Etherscan | N/A |
 | **Wait Time** | 60s | 60s | 300s | N/A |
 | **Format Check** | No | No | No | Yes |
+| **Coverage Report** | No | No | No | Opt-in |
 | **Contract Deploy** | Yes | Yes | Yes | No |

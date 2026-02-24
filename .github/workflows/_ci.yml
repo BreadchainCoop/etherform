@@ -25,6 +25,22 @@ on:
         description: 'Path to slither.config.json'
         type: string
         default: 'slither.config.json'
+      run-coverage:
+        description: 'Run forge coverage and post PR comment'
+        type: boolean
+        default: false
+      coverage-exclude-paths:
+        description: 'Path pattern to exclude from coverage (--no-match-path)'
+        type: string
+        default: ''
+      coverage-source-filter:
+        description: 'Grep filter for source files in coverage report'
+        type: string
+        default: ' src/'
+      coverage-post-comment:
+        description: 'Post coverage summary as a sticky PR comment'
+        type: boolean
+        default: true
 
 jobs:
   check:
@@ -73,3 +89,89 @@ jobs:
         with:
           slither-config: ${{ inputs.slither-config }}
           fail-on: ${{ inputs.slither-fail-on }}
+
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: [check]
+    if: inputs.run-coverage
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Run coverage
+        run: |
+          if [[ -n "${{ inputs.coverage-exclude-paths }}" ]]; then
+            forge coverage --no-match-path "${{ inputs.coverage-exclude-paths }}" 2>&1 | tee coverage-raw.txt
+          else
+            forge coverage 2>&1 | tee coverage-raw.txt
+          fi
+
+      - name: Extract summary table
+        run: |
+          # Extract the final summary table (box-drawing characters)
+          awk '/^╭/,/^╰/' coverage-raw.txt > coverage-table.txt
+
+          # Filter to only source files and compute totals from raw counts
+          grep '^|' coverage-table.txt | grep '${{ inputs.coverage-source-filter }}' > src-rows.txt || true
+
+          # Sum up hit/total for each metric across source files
+          total_lines_hit=0; total_lines_all=0
+          total_stmts_hit=0; total_stmts_all=0
+          total_branch_hit=0; total_branch_all=0
+          total_funcs_hit=0; total_funcs_all=0
+
+          while IFS='|' read -r _ file lines stmts branches funcs _; do
+            extract() { echo "$1" | grep -oP '\(\K[0-9]+/[0-9]+' | tr '/' ' '; }
+            read lh lt <<< "$(extract "$lines")"
+            read sh st <<< "$(extract "$stmts")"
+            read bh bt <<< "$(extract "$branches")"
+            read fh ft <<< "$(extract "$funcs")"
+            total_lines_hit=$((total_lines_hit + lh)); total_lines_all=$((total_lines_all + lt))
+            total_stmts_hit=$((total_stmts_hit + sh)); total_stmts_all=$((total_stmts_all + st))
+            total_branch_hit=$((total_branch_hit + bh)); total_branch_all=$((total_branch_all + bt))
+            total_funcs_hit=$((total_funcs_hit + fh)); total_funcs_all=$((total_funcs_all + ft))
+          done < src-rows.txt
+
+          pct() { [ "$2" -eq 0 ] && echo "100.00% (0/0)" || printf "%.2f%% (%d/%d)" "$(echo "scale=4; $1 * 100 / $2" | bc)" "$1" "$2"; }
+
+          # Build the markdown comment
+          {
+            echo "## Coverage Report"
+            echo ""
+            echo "| Metric | Coverage |"
+            echo "|--------|----------|"
+            echo "| Lines | $(pct $total_lines_hit $total_lines_all) |"
+            echo "| Statements | $(pct $total_stmts_hit $total_stmts_all) |"
+            echo "| Branches | $(pct $total_branch_hit $total_branch_all) |"
+            echo "| Functions | $(pct $total_funcs_hit $total_funcs_all) |"
+            echo ""
+            echo "<details><summary>Coverage by file</summary>"
+            echo ""
+            echo "| File | Lines | Statements | Branches | Functions |"
+            echo "|------|-------|------------|----------|-----------|"
+            while IFS='|' read -r _ file lines stmts branches funcs _; do
+              file=$(echo "$file" | xargs)
+              lines=$(echo "$lines" | xargs)
+              stmts=$(echo "$stmts" | xargs)
+              branches=$(echo "$branches" | xargs)
+              funcs=$(echo "$funcs" | xargs)
+              echo "| \`$file\` | $lines | $stmts | $branches | $funcs |"
+            done < src-rows.txt
+            echo ""
+            echo "</details>"
+          } > coverage-comment.md
+
+      - name: Post coverage comment
+        if: inputs.coverage-post-comment && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: coverage-comment.md
