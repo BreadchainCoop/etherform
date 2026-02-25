@@ -6,7 +6,7 @@ Reusable GitHub Actions workflows for Foundry smart contract CI/CD with upgrade 
 
 | Workflow | Description |
 |----------|-------------|
-| `_ci.yml` | Build, test, and format check |
+| `_ci.yml` | Build, test, format check, and coverage report |
 | `_upgrade-safety.yml` | OpenZeppelin upgrade safety validation |
 | `_deploy-testnet.yml` | Testnet deployment with Blockscout verification |
 | `_deploy-mainnet.yml` | Mainnet deployment with matrix support and 3-tier snapshot rotation |
@@ -47,6 +47,25 @@ jobs:
     secrets:
       PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
       RPC_URL: ${{ secrets.RPC_URL }}
+```
+
+```yaml
+# .github/workflows/ci.yml (with coverage)
+name: CI
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ci:
+    uses: BreadchainCoop/etherform/.github/workflows/_ci.yml@main
+    with:
+      check-formatting: true
+      run-coverage: true
+      coverage-exclude-paths: 'test/fork/**'
 ```
 
 ## Configuration
@@ -91,6 +110,15 @@ Create `.github/deploy-networks.json` in your repository:
 |-------|------|---------|-------------|
 | `check-formatting` | boolean | `true` | Run `forge fmt --check` |
 | `test-verbosity` | string | `'vvv'` | Test verbosity (`v`, `vv`, `vvv`, `vvvv`) |
+| `run-slither` | boolean | `false` | Run Slither static analysis |
+| `slither-fail-on` | string | `'high'` | Minimum severity to fail on (`low`, `medium`, `high`) |
+| `slither-config` | string | `'slither.config.json'` | Path to slither.config.json |
+| `run-coverage` | boolean | `false` | Run `forge coverage` and post PR comment |
+| `coverage-exclude-paths` | string | `''` | Path pattern to exclude from coverage (`--no-match-path`) |
+| `coverage-source-filter` | string | `' src/'` | Grep filter for source files in coverage report |
+| `coverage-post-comment` | boolean | `true` | Post coverage summary as a sticky PR comment |
+
+> **Note:** When `run-coverage` and `coverage-post-comment` are enabled, the calling workflow must have `pull-requests: write` permission for the sticky comment to be posted.
 
 ### `_upgrade-safety.yml`
 
