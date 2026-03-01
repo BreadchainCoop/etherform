@@ -100,6 +100,10 @@ on:
         description: 'Path to deployment script'
         type: string
         default: 'script/Deploy.s.sol:Deploy'
+      deployment-foundry-profile:
+        description: 'Foundry profile to use for deployment builds (sets FOUNDRY_PROFILE env var)'
+        type: string
+        default: ''
       network-config-path:
         description: 'Path to network configuration JSON'
         type: string
@@ -690,6 +694,7 @@ jobs:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
           DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
+          FOUNDRY_PROFILE: ${{ inputs.deployment-foundry-profile }}
         run: |
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
             export PRIVATE_KEY="0x$PRIVATE_KEY"
