@@ -361,14 +361,6 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.testnets[0].name' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
-
       - name: Deploy contracts
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
@@ -395,7 +387,43 @@ jobs:
             exit 1
           fi
           echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
+
+          # Extract the chain ID from the broadcast file path (broadcast/<script>/<chain_id>/run-latest.json)
+          CHAIN_ID=$(echo "$BROADCAST_FILE" | sed -E 's|.*/([0-9]+)/run-latest\.json$|\1|')
+          echo "chain_id=$CHAIN_ID" >> $GITHUB_OUTPUT
+          echo "Deployed to chain ID: $CHAIN_ID"
+
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
+
+      - name: Resolve Blockscout URL from chain ID
+        id: network
+        run: |
+          CHAIN_ID="${{ steps.parse.outputs.chain_id }}"
+          CONFIG="${{ inputs.network-config-path }}"
+
+          # Search both testnets and mainnets arrays for a matching chain_id
+          BLOCKSCOUT_URL=$(jq -r --argjson cid "$CHAIN_ID" '
+            (.testnets // []) + (.mainnets // [])
+            | map(select(.chain_id == $cid))
+            | first
+            | .blockscout_url // empty
+          ' "$CONFIG" 2>/dev/null) || true
+
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::warning::No Blockscout URL found for chain ID $CHAIN_ID in $CONFIG. Falling back to testnets[0]."
+            BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' "$CONFIG")
+          fi
+
+          NETWORK_NAME=$(jq -r --argjson cid "$CHAIN_ID" '
+            (.testnets // []) + (.mainnets // [])
+            | map(select(.chain_id == $cid))
+            | first
+            | .name // "unknown"
+          ' "$CONFIG" 2>/dev/null) || NETWORK_NAME="unknown"
+
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
+          echo "Resolved Blockscout URL for chain $CHAIN_ID: $BLOCKSCOUT_URL ($NETWORK_NAME)"
 
       - name: Create deployment summary
         env:
@@ -490,16 +518,6 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.mainnets[0].name' ${{ inputs.network-config-path }})
-          ENVIRONMENT=$(jq -r '.mainnets[0].environment' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
-          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
-
       - name: Deploy contracts
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
@@ -526,7 +544,51 @@ jobs:
             exit 1
           fi
           echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
+
+          # Extract the chain ID from the broadcast file path (broadcast/<script>/<chain_id>/run-latest.json)
+          CHAIN_ID=$(echo "$BROADCAST_FILE" | sed -E 's|.*/([0-9]+)/run-latest\.json$|\1|')
+          echo "chain_id=$CHAIN_ID" >> $GITHUB_OUTPUT
+          echo "Deployed to chain ID: $CHAIN_ID"
+
           jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
+
+      - name: Resolve Blockscout URL from chain ID
+        id: network
+        run: |
+          CHAIN_ID="${{ steps.parse.outputs.chain_id }}"
+          CONFIG="${{ inputs.network-config-path }}"
+
+          # Search both testnets and mainnets arrays for a matching chain_id
+          BLOCKSCOUT_URL=$(jq -r --argjson cid "$CHAIN_ID" '
+            (.testnets // []) + (.mainnets // [])
+            | map(select(.chain_id == $cid))
+            | first
+            | .blockscout_url // empty
+          ' "$CONFIG" 2>/dev/null) || true
+
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::warning::No Blockscout URL found for chain ID $CHAIN_ID in $CONFIG. Falling back to mainnets[0]."
+            BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' "$CONFIG")
+          fi
+
+          NETWORK_NAME=$(jq -r --argjson cid "$CHAIN_ID" '
+            (.testnets // []) + (.mainnets // [])
+            | map(select(.chain_id == $cid))
+            | first
+            | .name // "unknown"
+          ' "$CONFIG" 2>/dev/null) || NETWORK_NAME="unknown"
+
+          ENVIRONMENT=$(jq -r --argjson cid "$CHAIN_ID" '
+            (.testnets // []) + (.mainnets // [])
+            | map(select(.chain_id == $cid))
+            | first
+            | .environment // "unknown"
+          ' "$CONFIG" 2>/dev/null) || ENVIRONMENT="unknown"
+
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "Resolved Blockscout URL for chain $CHAIN_ID: $BLOCKSCOUT_URL ($NETWORK_NAME)"
 
       - name: Create deployment summary
         env:
