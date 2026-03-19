@@ -70,9 +70,6 @@ jobs:
             --slow \
             -vvvv
 
-      - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
-
       - name: Parse deployment addresses
         id: parse
         run: |
@@ -118,13 +115,42 @@ jobs:
             echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
           done < deployment-summary.txt
 
-      - name: Verify contracts on Blockscout
+      - name: Upload broadcast for verification
         if: inputs.verify-contracts
+        uses: actions/upload-artifact@v4
+        with:
+          name: broadcast-${{ steps.network.outputs.network_name }}
+          path: broadcast/
+
+  verify-testnet:
+    name: Verify on Blockscout
+    runs-on: ubuntu-latest
+    needs: [deploy-testnet]
+    if: inputs.verify-contracts && needs.deploy-testnet.result == 'success'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Download broadcast artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: broadcast-${{ needs.deploy-testnet.outputs.network_name }}
+          path: broadcast/
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Verify contracts on Blockscout
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.deploy-testnet.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
-          # Validate Blockscout URL format (fail fast on bad URL)
+          # Validate Blockscout URL format
           if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
             echo "::error::BLOCKSCOUT_URL is empty or not configured. Check deploy-networks.json."
             exit 1
@@ -134,10 +160,14 @@ jobs:
             exit 1
           fi
 
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
+          if [[ -z "$BROADCAST_FILE" ]]; then
+            echo "No broadcast file found"
+            exit 1
+          fi
+
           VERIFY_FAILED=0
 
-          # Use process substitution (not pipe) so variables propagate to this shell
           while read -r tx; do
             CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
             CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
@@ -146,8 +176,6 @@ jobs:
             VERIFIED=0
 
             for attempt in 1 2 3; do
-              # Capture output to check for actual success (exit code alone is unreliable)
-              # Use timeout to prevent hanging on unreachable URLs
               VERIFY_OUTPUT=$(timeout 120 forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
                 --verifier blockscout \
                 --verifier-url "${BLOCKSCOUT_URL}/api" \

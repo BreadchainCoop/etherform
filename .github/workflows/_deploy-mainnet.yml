@@ -96,9 +96,6 @@ jobs:
             --slow \
             -vvvv
 
-      - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
-
       - name: Parse deployment addresses
         id: parse
         run: |
@@ -144,13 +141,45 @@ jobs:
             echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
           done < deployment-summary.txt
 
-      - name: Verify contracts on Blockscout
+      - name: Upload broadcast for verification
         if: inputs.verify-contracts
+        uses: actions/upload-artifact@v4
+        with:
+          name: broadcast-${{ matrix.name }}
+          path: broadcast/
+
+  verify:
+    name: Verify on ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    needs: [read-config, deploy]
+    if: inputs.verify-contracts && needs.deploy.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.read-config.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Download broadcast artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: broadcast-${{ matrix.name }}
+          path: broadcast/
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Verify contracts on Blockscout
         env:
           BLOCKSCOUT_URL: ${{ matrix.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
-          # Validate Blockscout URL format (fail fast on bad URL)
+          # Validate Blockscout URL format
           if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
             echo "::error::BLOCKSCOUT_URL is empty or not configured. Check deploy-networks.json."
             exit 1
@@ -160,7 +189,12 @@ jobs:
             exit 1
           fi
 
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
+          if [[ -z "$BROADCAST_FILE" ]]; then
+            echo "No broadcast file found"
+            exit 1
+          fi
+
           VERIFY_FAILED=0
 
           while read -r tx; do

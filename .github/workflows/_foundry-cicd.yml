@@ -352,6 +352,9 @@ jobs:
       (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
       inputs.deploy-on-pr &&
       github.event_name == 'pull_request'
+    outputs:
+      network_name: ${{ steps.network.outputs.network_name }}
+      blockscout_url: ${{ steps.network.outputs.blockscout_url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -374,9 +377,6 @@ jobs:
             --broadcast \
             --slow \
             -vvvv
-
-      - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
 
       - name: Parse deployment addresses
         id: parse
@@ -440,13 +440,45 @@ jobs:
             echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
           done < deployment-summary.txt
 
-      - name: Verify contracts on Blockscout
+      - name: Upload broadcast for verification
         if: inputs.verify-contracts
+        uses: actions/upload-artifact@v4
+        with:
+          name: broadcast-testnet-${{ steps.network.outputs.network_name }}
+          path: broadcast/
+
+  verify-testnet:
+    name: Verify Testnet
+    runs-on: ubuntu-latest
+    needs: [detect-changes, ci, upgrade-safety, deploy-testnet]
+    if: |
+      always() &&
+      needs.deploy-testnet.result == 'success' &&
+      inputs.verify-contracts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Download broadcast artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: broadcast-testnet-${{ needs.deploy-testnet.outputs.network_name }}
+          path: broadcast/
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Verify contracts on Blockscout
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.deploy-testnet.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
-          # Validate Blockscout URL format (fail fast on bad URL)
+          # Validate Blockscout URL format
           if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
             echo "::error::BLOCKSCOUT_URL is empty or not configured. Check deploy-networks.json."
             exit 1
@@ -456,7 +488,11 @@ jobs:
             exit 1
           fi
 
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
+          if [[ -z "$BROADCAST_FILE" ]]; then
+            echo "No broadcast file found"
+            exit 1
+          fi
 
           # Collect all CREATE contracts
           CONTRACTS=()
@@ -544,6 +580,9 @@ jobs:
       inputs.deploy-on-main &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main'
+    outputs:
+      network_name: ${{ steps.network.outputs.network_name }}
+      blockscout_url: ${{ steps.network.outputs.blockscout_url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -566,9 +605,6 @@ jobs:
             --broadcast \
             --slow \
             -vvvv
-
-      - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
 
       - name: Parse deployment addresses
         id: parse
@@ -640,13 +676,45 @@ jobs:
             echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
           done < deployment-summary.txt
 
-      - name: Verify contracts on Blockscout
+      - name: Upload broadcast for verification
         if: inputs.verify-contracts
+        uses: actions/upload-artifact@v4
+        with:
+          name: broadcast-mainnet-${{ steps.network.outputs.network_name }}
+          path: broadcast/
+
+  verify-mainnet:
+    name: Verify Mainnet
+    runs-on: ubuntu-latest
+    needs: [detect-changes, ci, upgrade-safety, deploy-mainnet]
+    if: |
+      always() &&
+      needs.deploy-mainnet.result == 'success' &&
+      inputs.verify-contracts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Download broadcast artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: broadcast-mainnet-${{ needs.deploy-mainnet.outputs.network_name }}
+          path: broadcast/
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Verify contracts on Blockscout
         env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.deploy-mainnet.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
-          # Validate Blockscout URL format (fail fast on bad URL)
+          # Validate Blockscout URL format
           if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
             echo "::error::BLOCKSCOUT_URL is empty or not configured. Check deploy-networks.json."
             exit 1
@@ -656,7 +724,11 @@ jobs:
             exit 1
           fi
 
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
+          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
+          if [[ -z "$BROADCAST_FILE" ]]; then
+            echo "No broadcast file found"
+            exit 1
+          fi
 
           # Collect all CREATE contracts
           CONTRACTS=()
