@@ -145,9 +145,15 @@ jobs:
       - name: Build contracts
         run: forge build
 
+      - name: Read network config
+        id: network
+        run: |
+          BLOCKSCOUT_URL=$(jq -r '.testnets[${{ inputs.network-index }}].blockscout_url' ${{ inputs.network-config-path }})
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+
       - name: Verify contracts on Blockscout
         env:
-          BLOCKSCOUT_URL: ${{ needs.deploy-testnet.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           # Validate Blockscout URL format

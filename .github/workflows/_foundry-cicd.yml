@@ -473,9 +473,37 @@ jobs:
       - name: Build contracts
         run: forge build
 
+      - name: Resolve Blockscout URL from chain ID
+        id: network
+        run: |
+          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
+          if [[ -z "$BROADCAST_FILE" ]]; then
+            echo "No broadcast file found"
+            exit 1
+          fi
+          echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
+
+          CHAIN_ID=$(echo "$BROADCAST_FILE" | sed -E 's|.*/([0-9]+)/run-latest\.json$|\1|')
+          CONFIG="${{ inputs.network-config-path }}"
+
+          BLOCKSCOUT_URL=$(jq -r --argjson cid "$CHAIN_ID" '
+            (.testnets // []) + (.mainnets // [])
+            | map(select(.chain_id == $cid))
+            | first
+            | .blockscout_url // empty
+          ' "$CONFIG" 2>/dev/null) || true
+
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::warning::No Blockscout URL found for chain ID $CHAIN_ID in $CONFIG. Falling back to testnets[0]."
+            BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' "$CONFIG")
+          fi
+
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "Resolved Blockscout URL for chain $CHAIN_ID: $BLOCKSCOUT_URL"
+
       - name: Verify contracts on Blockscout
         env:
-          BLOCKSCOUT_URL: ${{ needs.deploy-testnet.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           # Validate Blockscout URL format
@@ -488,11 +516,7 @@ jobs:
             exit 1
           fi
 
-          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
-          if [[ -z "$BROADCAST_FILE" ]]; then
-            echo "No broadcast file found"
-            exit 1
-          fi
+          BROADCAST_FILE="${{ steps.network.outputs.broadcast_file }}"
 
           # Collect all CREATE contracts
           CONTRACTS=()
@@ -709,9 +733,37 @@ jobs:
       - name: Build contracts
         run: forge build
 
+      - name: Resolve Blockscout URL from chain ID
+        id: network
+        run: |
+          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
+          if [[ -z "$BROADCAST_FILE" ]]; then
+            echo "No broadcast file found"
+            exit 1
+          fi
+          echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
+
+          CHAIN_ID=$(echo "$BROADCAST_FILE" | sed -E 's|.*/([0-9]+)/run-latest\.json$|\1|')
+          CONFIG="${{ inputs.network-config-path }}"
+
+          BLOCKSCOUT_URL=$(jq -r --argjson cid "$CHAIN_ID" '
+            (.testnets // []) + (.mainnets // [])
+            | map(select(.chain_id == $cid))
+            | first
+            | .blockscout_url // empty
+          ' "$CONFIG" 2>/dev/null) || true
+
+          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
+            echo "::warning::No Blockscout URL found for chain ID $CHAIN_ID in $CONFIG. Falling back to mainnets[0]."
+            BLOCKSCOUT_URL=$(jq -r '.mainnets[0].blockscout_url' "$CONFIG")
+          fi
+
+          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
+          echo "Resolved Blockscout URL for chain $CHAIN_ID: $BLOCKSCOUT_URL"
+
       - name: Verify contracts on Blockscout
         env:
-          BLOCKSCOUT_URL: ${{ needs.deploy-mainnet.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
         run: |
           # Validate Blockscout URL format
@@ -724,11 +776,7 @@ jobs:
             exit 1
           fi
 
-          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
-          if [[ -z "$BROADCAST_FILE" ]]; then
-            echo "No broadcast file found"
-            exit 1
-          fi
+          BROADCAST_FILE="${{ steps.network.outputs.broadcast_file }}"
 
           # Collect all CREATE contracts
           CONTRACTS=()
