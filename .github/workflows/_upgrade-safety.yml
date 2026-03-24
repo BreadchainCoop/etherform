@@ -1,23 +1,25 @@
-# Reusable upgrade safety validation workflow
+# Reusable upgrade safety validation workflow using OpenZeppelin upgrades-core CLI
 # Usage: jobs.<job>.uses: ./.github/workflows/_upgrade-safety.yml
+#
+# Validates contracts listed in upgrades.json against committed flattened baselines.
+# Compatible with the 3-tier snapshot rotation (current → baseline → previous).
+#
+# Consumers must set in their foundry.toml:
+#   build_info = true
+#   extra_output = ["storageLayout"]
 name: Upgrade Safety (Reusable)
 
 on:
   workflow_call:
     inputs:
+      upgrades-config:
+        description: 'Path to upgrade safety configuration (upgrades.json)'
+        type: string
+        default: '.github/upgrades.json'
       baseline-path:
-        description: 'Path to baseline contracts for comparison'
+        description: 'Path to flattened baseline contracts'
         type: string
         default: 'test/upgrades/baseline'
-      fallback-path:
-        description: 'Fallback path if baseline not found'
-        type: string
-        default: 'test/upgrades/previous'
-      validation-script:
-        description: 'Path to validation script'
-        type: string
-        default: 'script/upgrades/ValidateUpgrade.s.sol'
-
 jobs:
   upgrade-safety:
     name: Validate Upgrade Safety
@@ -28,21 +30,174 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
-      - name: Run upgrade safety validation
-        run: |
-          forge clean && forge build
+      - name: Install OpenZeppelin upgrades-core
+        run: npm install -g @openzeppelin/upgrades-core
 
-          # Check for baseline contracts (primary path or fallback)
-          if [ -d "${{ inputs.baseline-path }}" ] && ls ${{ inputs.baseline-path }}/*.sol 1> /dev/null 2>&1; then
-            echo "Baseline contracts found in ${{ inputs.baseline-path }}, running upgrade validation..."
-            forge script ${{ inputs.validation-script }} -vvv
-          elif [ -d "${{ inputs.fallback-path }}" ] && ls ${{ inputs.fallback-path }}/*.sol 1> /dev/null 2>&1; then
-            echo "Baseline contracts found in ${{ inputs.fallback-path }} (fallback path), running upgrade validation..."
-            forge script ${{ inputs.validation-script }} -vvv
-          else
-            echo "::warning::Baseline missing — will auto-init on first merge to main"
-            echo "No baseline contracts found, skipping upgrade validation (initial deployment)"
+      - name: Build contracts
+        run: forge build
+
+      - name: Validate upgrade safety
+        run: |
+          set -euo pipefail
+
+          CONFIG="${{ inputs.upgrades-config }}"
+          BASELINE="${{ inputs.baseline-path }}"
+          CURRENT_BUILD="out/build-info"
+
+          # Check if config exists
+          if [[ ! -f "$CONFIG" ]]; then
+            echo "::warning::No upgrades config found at $CONFIG — skipping upgrade safety validation"
+            {
+              echo "## Upgrade Safety Validation"
+              echo ""
+              echo "> No \`$CONFIG\` found. Skipping validation."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+
+          # Check for empty contracts array
+          CONTRACT_COUNT=$(jq '.contracts | length' "$CONFIG")
+          if [[ "$CONTRACT_COUNT" -eq 0 ]]; then
+            echo "::warning::No contracts defined in $CONFIG — skipping upgrade safety validation"
+            {
+              echo "## Upgrade Safety Validation"
+              echo ""
+              echo "> No contracts defined in \`$CONFIG\`. Skipping validation."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Check if baseline exists
+          BASELINE_EXISTS=false
+          if [[ -d "$BASELINE" ]] && ls ${BASELINE}/*.sol 1> /dev/null 2>&1; then
+            BASELINE_EXISTS=true
+            echo "Using baseline from $BASELINE"
+          else
+            echo "::warning::No baseline contracts found — new contracts will be validated for upgradeability only"
+          fi
+
+          PASSED=0
+          FAILED=0
+          SUMMARY=""
+
+          # Helper: build a flattened baseline file in a temp Foundry project to produce build-info
+          build_baseline_reference() {
+            local BASELINE_FILE="$1"
+            local CONTRACT_NAME="$2"
+            local TEMP_DIR
+            TEMP_DIR=$(mktemp -d)
+
+            cat > "${TEMP_DIR}/foundry.toml" <<TOML
+          [profile.default]
+          build_info = true
+          extra_output = ["storageLayout"]
+          TOML
+
+            mkdir -p "${TEMP_DIR}/src"
+            cp "$BASELINE_FILE" "${TEMP_DIR}/src/${CONTRACT_NAME}.sol"
+
+            if ! (cd "$TEMP_DIR" && forge build 2>&1); then
+              echo "::error::Failed to build baseline reference from $BASELINE_FILE"
+              return 1
+            fi
+
+            echo "${TEMP_DIR}/out/build-info"
+          }
+
+          # Validate each contract
+          while IFS= read -r entry; do
+            CONTRACT=$(echo "$entry" | jq -r '.contract')
+            REF_VALUE=$(echo "$entry" | jq -c '.reference // empty')
+
+            # Extract short contract name (after the colon in "src/Foo.sol:Foo")
+            CONTRACT_NAME="${CONTRACT##*:}"
+
+            echo "::group::Validating $CONTRACT"
+
+            if [[ -z "$REF_VALUE" || "$REF_VALUE" == "null" ]]; then
+              # === Baseline reference (default) ===
+              if [[ "$BASELINE_EXISTS" == "true" && -f "${BASELINE}/${CONTRACT_NAME}.sol" ]]; then
+                # Build baseline into temp project for OZ CLI comparison
+                if ! BASELINE_BUILD=$(build_baseline_reference "${BASELINE}/${CONTRACT_NAME}.sol" "$CONTRACT_NAME"); then
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | baseline | **FAIL** (baseline build error) |"$'\n'
+                  FAILED=$((FAILED + 1))
+                  echo "::endgroup::"
+                  continue
+                fi
+
+                if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
+                    --contract "$CONTRACT" \
+                    --reference "src/${CONTRACT_NAME}.sol:${CONTRACT_NAME}" \
+                    --referenceBuildInfoDirs "$BASELINE_BUILD" 2>&1); then
+                  echo "$OUTPUT"
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | baseline | Pass |"$'\n'
+                  PASSED=$((PASSED + 1))
+                else
+                  echo "$OUTPUT"
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | baseline | **FAIL** |"$'\n'
+                  FAILED=$((FAILED + 1))
+                fi
+              else
+                # No baseline for this contract — validate upgradeability only
+                echo "No baseline found for $CONTRACT_NAME, validating upgradeability only..."
+                if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
+                    --contract "$CONTRACT" 2>&1); then
+                  echo "$OUTPUT"
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (no baseline) | Pass |"$'\n'
+                  PASSED=$((PASSED + 1))
+                else
+                  echo "$OUTPUT"
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (no baseline) | **FAIL** |"$'\n'
+                  FAILED=$((FAILED + 1))
+                fi
+              fi
+
+            elif echo "$REF_VALUE" | jq -e 'type == "string"' > /dev/null 2>&1; then
+              # === Contract qualifier reference ===
+              QUALIFIER=$(echo "$entry" | jq -r '.reference')
+              if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
+                  --contract "$CONTRACT" \
+                  --reference "$QUALIFIER" 2>&1); then
+                echo "$OUTPUT"
+                SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${QUALIFIER}\` | Pass |"$'\n'
+                PASSED=$((PASSED + 1))
+              else
+                echo "$OUTPUT"
+                SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${QUALIFIER}\` | **FAIL** |"$'\n'
+                FAILED=$((FAILED + 1))
+              fi
+
+            else
+              echo "::error::Invalid reference format for $CONTRACT"
+              SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (invalid reference) | **FAIL** |"$'\n'
+              FAILED=$((FAILED + 1))
+            fi
+
+            echo "::endgroup::"
+          done < <(jq -c '.contracts[]' "$CONFIG")
+
+          # Write Step Summary
+          {
+            echo "## Upgrade Safety Validation"
+            echo ""
+            echo "| Contract | Reference | Result |"
+            echo "|----------|-----------|--------|"
+            echo -n "$SUMMARY"
+            echo ""
+            echo "**${PASSED} passed, ${FAILED} failed**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$FAILED" -gt 0 ]]; then
+            echo "::error::${FAILED} contract(s) failed upgrade safety validation"
+            exit 1
+          fi
+
+          echo "All contracts passed upgrade safety validation"
