@@ -16,10 +16,10 @@ on:
         description: 'Path to upgrade safety configuration (upgrades.json)'
         type: string
         default: '.github/upgrades.json'
-      baseline-path:
-        description: 'Path to flattened baseline contracts'
+      upgrades-path:
+        description: 'Path to flattened contract snapshots (baseline read from {upgrades-path}/baseline)'
         type: string
-        default: 'test/upgrades/baseline'
+        default: 'test/upgrades'
 jobs:
   upgrade-safety:
     name: Validate Upgrade Safety
@@ -49,7 +49,7 @@ jobs:
           set -euo pipefail
 
           CONFIG="${{ inputs.upgrades-config }}"
-          BASELINE="${{ inputs.baseline-path }}"
+          BASELINE="${{ inputs.upgrades-path }}/baseline"
           CURRENT_BUILD="out/build-info"
 
           # Check if config exists

@@ -68,10 +68,6 @@ on:
         description: 'Run upgrade safety validation'
         type: boolean
         default: true
-      baseline-path:
-        description: 'Path to baseline contracts for upgrade comparison'
-        type: string
-        default: 'test/upgrades/baseline'
       upgrades-config:
         description: 'Path to upgrade safety configuration (upgrades.json)'
         type: string
@@ -339,7 +335,7 @@ jobs:
           set -euo pipefail
 
           CONFIG="${{ inputs.upgrades-config }}"
-          BASELINE="${{ inputs.baseline-path }}"
+          BASELINE="${{ inputs.upgrades-path }}/baseline"
           CURRENT_BUILD="out/build-info"
 
           # Check if config exists

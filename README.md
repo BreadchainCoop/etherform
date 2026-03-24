@@ -211,7 +211,7 @@ Create `.github/deploy-networks.json` in your repository:
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
 | `upgrades-config` | string | `'.github/upgrades.json'` | Path to upgrade safety config |
-| `baseline-path` | string | `'test/upgrades/baseline'` | Path to flattened baseline contracts |
+| `upgrades-path` | string | `'test/upgrades'` | Path to flattened snapshots (baseline read from `{upgrades-path}/baseline`) |
 
 ### `_deploy-testnet.yml`
 
