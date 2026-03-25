@@ -123,7 +123,7 @@ on:
       upgrades-path:
         description: 'Path for flattened contract snapshots'
         type: string
-        default: 'test/upgrades'
+        default: 'upgrades'
 
       # Halmos Options
       run-halmos:
