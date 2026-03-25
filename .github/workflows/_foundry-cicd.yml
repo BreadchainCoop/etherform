@@ -573,9 +573,9 @@ jobs:
           "${BLOCKSCOUT_API}?module=block&action=eth_block_number" || true)
 
           # Check it's valid JSON and has expected shape
-          STATUS=$(echo "$RESPONSE" | jq -r '.status // empty' 2>/dev/null || true)
+          STATUS=$(echo "$RESPONSE" | jq -r '.jsonrpc // empty' 2>/dev/null || true)
 
-          if [[ "$STATUS" != "1" ]]; then
+          if [[ "$STATUS" != "2.0" ]]; then
             echo "::error::Invalid Blockscout API URL: $BLOCKSCOUT_API"
             echo "Response was:"
             echo "$RESPONSE"
