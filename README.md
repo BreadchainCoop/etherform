@@ -83,6 +83,92 @@ jobs:
       RPC_URL: ${{ secrets.RPC_URL }}
 ```
 
+## Upgrade Safety
+
+Etherform validates upgrade safety using the [OpenZeppelin upgrades-core CLI](https://www.npmjs.com/package/@openzeppelin/upgrades-core), which checks storage layout compatibility, initializer safety, and proxy semantics.
+
+### How it works
+
+1. **On PR**: The upgrade-safety job compares each contract against its committed **flattened baseline** (the last deployed version) using the OZ CLI
+2. **On mainnet deploy**: The `flatten-snapshots` job flattens deployed contracts and rotates snapshots (`current/` → `baseline/` → `previous/`), auto-committing to the repo
+3. **Next PR**: Validates against the updated baseline
+
+This ensures the reference is always the **last deployed version**, not just the latest code on main.
+
+### Setup
+
+#### 1. Add `foundry.toml` settings
+
+```toml
+build_info = true
+extra_output = ["storageLayout"]
+```
+
+#### 2. Create `.github/upgrades.json`
+
+Each entry specifies a contract to validate. The `reference` field controls what to compare against:
+
+| `reference` value | Behavior |
+|---|---|
+| Omitted / `null` | Compare against the committed flattened baseline (default) |
+| `"src/V1.sol:V1"` | Compare against another contract in the same build |
+
+**Minimal** — validate against flattened baselines (most common):
+
+```json
+{
+  "contracts": [
+    { "contract": "src/Greeter.sol:Greeter" },
+    { "contract": "src/Token.sol:Token" }
+  ]
+}
+```
+
+**With explicit contract reference** — compare against a V1 contract kept in the repo:
+
+```json
+{
+  "contracts": [
+    {
+      "contract": "src/GreeterV2.sol:GreeterV2",
+      "reference": "src/GreeterV1.sol:GreeterV1"
+    }
+  ]
+}
+```
+
+#### 3. Use the workflow
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  ci:
+    uses: BreadchainCoop/etherform/.github/workflows/_ci.yml@main
+
+  upgrade-safety:
+    needs: [ci]
+    uses: BreadchainCoop/etherform/.github/workflows/_upgrade-safety.yml@main
+```
+
+On the first run (no baselines yet), contracts are validated for upgradeability only. Baselines are initialized automatically after the first mainnet deploy.
+
+### Unsafe-allow overrides
+
+Use NatSpec annotations in your Solidity source:
+
+```solidity
+/// @custom:oz-upgrades-unsafe-allow delegatecall
+contract MyContract is Initializable {
+    // ...
+}
+```
+
+See the [OpenZeppelin docs](https://docs.openzeppelin.com/upgrades-plugins/writing-upgradeable) for all supported annotations.
+
 ## Configuration
 
 ### Network Configuration
@@ -155,11 +241,11 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
-| `baseline-path` | string | `'test/upgrades/baseline'` | Path to baseline contracts |
-| `fallback-path` | string | `'test/upgrades/previous'` | Fallback path if baseline missing |
 | `validation-script` | string | `'script/upgrades/ValidateUpgrade.s.sol'` | Validation script path |
 | `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
 | `node-version` | string | `'20'` | Node.js version for package installation |
+| `upgrades-config` | string | `'.github/upgrades.json'` | Path to upgrade safety config |
+| `upgrades-path` | string | `'test/upgrades'` | Path to flattened snapshots (baseline read from `{upgrades-path}/baseline`) |
 
 ### `_deploy-testnet.yml`
 
