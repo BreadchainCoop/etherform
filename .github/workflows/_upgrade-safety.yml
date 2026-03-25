@@ -1,8 +1,9 @@
 # Reusable upgrade safety validation workflow using OpenZeppelin upgrades-core CLI
 # Usage: jobs.<job>.uses: ./.github/workflows/_upgrade-safety.yml
 #
-# Validates contracts listed in upgrades.json against committed flattened baselines.
-# Compatible with the 3-tier snapshot rotation (current → baseline → previous).
+# Validates contracts listed in upgrades.json for upgrade safety.
+# Contracts without an explicit reference are compared against the base branch.
+# Contracts with an explicit reference are compared within the current build.
 #
 # Consumers must set in their foundry.toml:
 #   build_info = true
@@ -16,14 +17,10 @@ on:
         description: 'Path to upgrade safety configuration (upgrades.json)'
         type: string
         default: '.github/upgrades.json'
-      upgrades-path:
-        description: 'Path to flattened contract snapshots (baseline read from {upgrades-path}/baseline)'
+      base-branch:
+        description: 'Base branch to compare against when no explicit reference is provided'
         type: string
-        default: 'test/upgrades/previous'
-      validation-script:
-        description: 'Path to validation script'
-        type: string
-        default: 'script/upgrades/ValidateUpgrade.s.sol'
+        default: 'main'
       package-manager:
         description: 'Package manager for Node.js dependencies (none, npm, yarn, pnpm)'
         type: string
@@ -41,6 +38,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -77,7 +75,7 @@ jobs:
           set -euo pipefail
 
           CONFIG="${{ inputs.upgrades-config }}"
-          BASELINE="${{ inputs.upgrades-path }}/baseline"
+          BASE_BRANCH="${{ inputs.base-branch }}"
           CURRENT_BUILD="out/build-info"
 
           # Check if config exists
@@ -103,87 +101,86 @@ jobs:
             exit 0
           fi
 
-          # Check if baseline exists
-          BASELINE_EXISTS=false
-          if [[ -d "$BASELINE" ]] && ls ${BASELINE}/*.sol 1> /dev/null 2>&1; then
-            BASELINE_EXISTS=true
-            echo "Using baseline from $BASELINE"
-          else
-            echo "::warning::No baseline contracts found — new contracts will be validated for upgradeability only"
+          # Check if any contracts need base branch comparison (no explicit reference)
+          NEEDS_BASE=false
+          while IFS= read -r entry; do
+            REF_VALUE=$(echo "$entry" | jq -c '.reference // empty')
+            if [[ -z "$REF_VALUE" || "$REF_VALUE" == "null" ]]; then
+              NEEDS_BASE=true
+              break
+            fi
+          done < <(jq -c '.contracts[]' "$CONFIG")
+
+          # Build base branch in a worktree if needed
+          BASE_BUILD=""
+          BASE_DIR=""
+          if [[ "$NEEDS_BASE" == "true" ]]; then
+            echo "Building base branch ($BASE_BRANCH) for comparison..."
+            git fetch origin "$BASE_BRANCH" 2>/dev/null || true
+            BASE_DIR=$(mktemp -d)
+
+            if git worktree add --detach "$BASE_DIR" "origin/$BASE_BRANCH" 2>/dev/null; then
+              (cd "$BASE_DIR" && git submodule update --init --recursive 2>/dev/null || true)
+
+              # Install dependencies in base worktree if needed
+              if [[ "${{ inputs.package-manager }}" != "none" ]]; then
+                (cd "$BASE_DIR" && case "${{ inputs.package-manager }}" in
+                  npm)  npm ci ;;
+                  yarn) yarn --frozen-lockfile ;;
+                  pnpm) corepack enable && pnpm install --frozen-lockfile ;;
+                esac) || echo "::warning::Failed to install dependencies in base branch"
+              fi
+
+              if (cd "$BASE_DIR" && forge build 2>&1); then
+                BASE_BUILD="${BASE_DIR}/out/build-info"
+                echo "Base branch built successfully"
+              else
+                echo "::warning::Failed to build base branch — contracts without explicit reference will be validated for upgradeability only"
+              fi
+            else
+              echo "::warning::Could not checkout base branch '$BASE_BRANCH' — contracts without explicit reference will be validated for upgradeability only"
+            fi
           fi
 
           PASSED=0
           FAILED=0
           SUMMARY=""
 
-          # Helper: build a flattened baseline file in a temp Foundry project to produce build-info
-          build_baseline_reference() {
-            local BASELINE_FILE="$1"
-            local CONTRACT_NAME="$2"
-            local TEMP_DIR
-            TEMP_DIR=$(mktemp -d)
-
-            cat > "${TEMP_DIR}/foundry.toml" <<TOML
-          [profile.default]
-          build_info = true
-          extra_output = ["storageLayout"]
-          TOML
-
-            mkdir -p "${TEMP_DIR}/src"
-            cp "$BASELINE_FILE" "${TEMP_DIR}/src/${CONTRACT_NAME}.sol"
-
-            if ! (cd "$TEMP_DIR" && forge build 2>&1); then
-              echo "::error::Failed to build baseline reference from $BASELINE_FILE"
-              return 1
-            fi
-
-            echo "${TEMP_DIR}/out/build-info"
-          }
-
           # Validate each contract
           while IFS= read -r entry; do
             CONTRACT=$(echo "$entry" | jq -r '.contract')
             REF_VALUE=$(echo "$entry" | jq -c '.reference // empty')
-
-            # Extract short contract name (after the colon in "src/Foo.sol:Foo")
-            CONTRACT_NAME="${CONTRACT##*:}"
+            CONTRACT_PATH="${CONTRACT%%:*}"
 
             echo "::group::Validating $CONTRACT"
 
             if [[ -z "$REF_VALUE" || "$REF_VALUE" == "null" ]]; then
-              # === Baseline reference (default) ===
-              if [[ "$BASELINE_EXISTS" == "true" && -f "${BASELINE}/${CONTRACT_NAME}.sol" ]]; then
-                # Build baseline into temp project for OZ CLI comparison
-                if ! BASELINE_BUILD=$(build_baseline_reference "${BASELINE}/${CONTRACT_NAME}.sol" "$CONTRACT_NAME"); then
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | baseline | **FAIL** (baseline build error) |"$'\n'
-                  FAILED=$((FAILED + 1))
-                  echo "::endgroup::"
-                  continue
-                fi
-
+              # === Base branch comparison (default) ===
+              if [[ -n "$BASE_BUILD" ]] && git show "origin/${BASE_BRANCH}:${CONTRACT_PATH}" > /dev/null 2>&1; then
+                # Contract exists on base branch — compare storage layouts
                 if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
                     --contract "$CONTRACT" \
-                    --reference "src/${CONTRACT_NAME}.sol:${CONTRACT_NAME}" \
-                    --referenceBuildInfoDirs "$BASELINE_BUILD" 2>&1); then
+                    --reference "$CONTRACT" \
+                    --referenceBuildInfoDirs "$BASE_BUILD" 2>&1); then
                   echo "$OUTPUT"
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | baseline | Pass |"$'\n'
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${BASE_BRANCH}\` branch | Pass |"$'\n'
                   PASSED=$((PASSED + 1))
                 else
                   echo "$OUTPUT"
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | baseline | **FAIL** |"$'\n'
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${BASE_BRANCH}\` branch | **FAIL** |"$'\n'
                   FAILED=$((FAILED + 1))
                 fi
               else
-                # No baseline for this contract — validate upgradeability only
-                echo "No baseline found for $CONTRACT_NAME, validating upgradeability only..."
+                # Contract doesn't exist on base branch or base build failed — validate upgradeability only
+                echo "Contract not found on $BASE_BRANCH or base build unavailable, validating upgradeability only..."
                 if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
                     --contract "$CONTRACT" 2>&1); then
                   echo "$OUTPUT"
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (no baseline) | Pass |"$'\n'
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (new contract) | Pass |"$'\n'
                   PASSED=$((PASSED + 1))
                 else
                   echo "$OUTPUT"
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (no baseline) | **FAIL** |"$'\n'
+                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (new contract) | **FAIL** |"$'\n'
                   FAILED=$((FAILED + 1))
                 fi
               fi
@@ -211,6 +208,11 @@ jobs:
 
             echo "::endgroup::"
           done < <(jq -c '.contracts[]' "$CONFIG")
+
+          # Clean up worktree
+          if [[ -n "$BASE_DIR" ]]; then
+            git worktree remove "$BASE_DIR" --force 2>/dev/null || true
+          fi
 
           # Write Step Summary
           {
