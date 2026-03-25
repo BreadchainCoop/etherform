@@ -564,6 +564,26 @@ jobs:
             | .name // "unknown"
           ' "$CONFIG" 2>/dev/null) || NETWORK_NAME="unknown"
 
+          # Ensure BLOCKSCOUT_URL is actually BLOCKSCOUT API
+          BLOCKSCOUT_API="${BLOCKSCOUT_URL%/}/api/"
+
+          echo "Checking Blockscout API at: $BLOCKSCOUT_API"
+
+          RESPONSE=$(curl -sS --max-time 10 \
+          "${BLOCKSCOUT_API}?module=block&action=eth_block_number" || true)
+
+          # Check it's valid JSON and has expected shape
+          STATUS=$(echo "$RESPONSE" | jq -r '.status // empty' 2>/dev/null || true)
+
+          if [[ "$STATUS" != "1" ]]; then
+            echo "::error::Invalid Blockscout API URL: $BLOCKSCOUT_API"
+            echo "Response was:"
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+          echo "✓ Blockscout API looks valid"
+
           echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
           echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
           echo "Resolved Blockscout URL for chain $CHAIN_ID: $BLOCKSCOUT_URL ($NETWORK_NAME)"
