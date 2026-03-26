@@ -161,7 +161,7 @@ jobs:
                 # Contract exists on base branch — compare storage layouts
                 if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
                     --contract "$CONTRACT" \
-                    --reference "$CONTRACT" \
+                    --reference "base-build-info:${CONTRACT}" \
                     --referenceBuildInfoDirs "$BASE_BUILD" 2>&1); then
                   echo "$OUTPUT"
                   SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${BASE_BRANCH}\` branch | Pass |"$'\n'
