@@ -38,6 +38,9 @@ on:
         required: true
       RPC_URL:
         required: true
+      DEPLOY_ENV_VARS:
+        description: 'Newline-separated KEY=VALUE pairs exported before running the deploy script'
+        required: false
 
 jobs:
   deploy-testnet:
@@ -83,11 +86,21 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
         run: |
           # Ensure PRIVATE_KEY has 0x prefix
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
             export PRIVATE_KEY="0x$PRIVATE_KEY"
           fi
+
+          # Export user-provided environment variables
+          if [[ -n "$DEPLOY_ENV_VARS" ]]; then
+            while IFS= read -r line; do
+              [[ -z "$line" || "$line" == \#* ]] && continue
+              export "$line"
+            done <<< "$DEPLOY_ENV_VARS"
+          fi
+
           forge script ${{ inputs.deploy-script }} \
             --rpc-url "$RPC_URL" \
             --broadcast \

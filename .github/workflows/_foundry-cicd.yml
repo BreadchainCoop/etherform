@@ -147,6 +147,9 @@ on:
       GH_TOKEN:
         description: 'GitHub token for pushing commits'
         required: false
+      DEPLOY_ENV_VARS:
+        description: 'Newline-separated KEY=VALUE pairs exported before running the deploy script'
+        required: false
 
 jobs:
   detect-changes:
@@ -719,10 +722,20 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
         run: |
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
             export PRIVATE_KEY="0x$PRIVATE_KEY"
           fi
+
+          # Export user-provided environment variables
+          if [[ -n "$DEPLOY_ENV_VARS" ]]; then
+            while IFS= read -r line; do
+              [[ -z "$line" || "$line" == \#* ]] && continue
+              export "$line"
+            done <<< "$DEPLOY_ENV_VARS"
+          fi
+
           forge script ${{ inputs.deploy-script }} \
             --rpc-url "$RPC_URL" \
             --broadcast \
@@ -947,10 +960,20 @@ jobs:
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
+          DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
         run: |
           if [[ "$PRIVATE_KEY" != 0x* ]]; then
             export PRIVATE_KEY="0x$PRIVATE_KEY"
           fi
+
+          # Export user-provided environment variables
+          if [[ -n "$DEPLOY_ENV_VARS" ]]; then
+            while IFS= read -r line; do
+              [[ -z "$line" || "$line" == \#* ]] && continue
+              export "$line"
+            done <<< "$DEPLOY_ENV_VARS"
+          fi
+
           forge script ${{ inputs.deploy-script }} \
             --rpc-url "$RPC_URL" \
             --broadcast \
