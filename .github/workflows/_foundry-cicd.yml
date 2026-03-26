@@ -578,7 +578,8 @@ jobs:
               fi
 
               if (cd "$BASE_DIR" && forge build 2>&1); then
-                BASE_BUILD="${BASE_DIR}/out/build-info"
+                mv "${BASE_DIR}/out/build-info" "${BASE_DIR}/out/base-build-info"
+                BASE_BUILD="${BASE_DIR}/out/base-build-info"
                 echo "Base branch built successfully"
               else
                 echo "::warning::Failed to build base branch — contracts without explicit reference will be validated for upgradeability only"
