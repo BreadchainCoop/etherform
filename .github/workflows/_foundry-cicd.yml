@@ -517,7 +517,7 @@ jobs:
         run: npm install -g @openzeppelin/upgrades-core
 
       - name: Build contracts
-        run: forge build
+        run: forge build --build-info --extra-output storageLayout
 
       - name: Validate upgrade safety
         run: |
@@ -580,7 +580,7 @@ jobs:
                 esac) || echo "::warning::Failed to install dependencies in base branch"
               fi
 
-              if (cd "$BASE_DIR" && forge build 2>&1); then
+              if (cd "$BASE_DIR" && forge build --build-info --extra-output storageLayout 2>&1); then
                 mv "${BASE_DIR}/out/build-info" "${BASE_DIR}/out/base-build-info"
                 BASE_BUILD="${BASE_DIR}/out/base-build-info"
                 echo "Base branch built successfully"
