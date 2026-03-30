@@ -167,6 +167,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 |--------|---------|-------------|
 | `PRIVATE_KEY` | Deploy workflows | Deployer wallet private key |
 | `RPC_URL` | All workflows | Network RPC endpoint (also used for fork-based tests) |
+| `DEPLOY_ENV_VARS` | Deploy workflows | Optional; newline-separated `KEY=VALUE` pairs exported as environment variables before running the deploy script |
 
 ## Workflow Inputs
 
