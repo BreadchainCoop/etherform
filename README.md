@@ -225,7 +225,3 @@ The all-in-one workflow accepts all inputs from the above workflows plus:
 | `contract-paths` | string | `src/**`, `script/**`, etc. | Paths to watch for changes |
 | `main-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 | `deploy-on-pr` | boolean | `false` | Deploy to testnet on PR |
-
-## Example Project
-
-See the [examples/foundry-counter](examples/foundry-counter) submodule for a complete working example.
