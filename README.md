@@ -59,8 +59,8 @@ Etherform validates upgrade safety using the [OpenZeppelin upgrades-core CLI](ht
 
 ### How it works
 
-1. **On PR**: The upgrade-safety job compares each contract against its committed **flattened baseline** using the OZ CLI
-2. **Next PR**: Validates against the updated baseline
+1. **On PR**: The upgrade-safety job checks out the base branch via git worktree, builds it, and compares each contract's storage layout against the current branch using the OZ CLI
+2. **Next PR**: Validates against the latest base branch
 
 ### Setup
 
@@ -77,10 +77,10 @@ Each entry specifies a contract to validate. The `reference` field controls what
 
 | `reference` value | Behavior |
 |---|---|
-| Omitted / `null` | Compare against the committed flattened baseline (default) |
+| Omitted / `null` | Compare against the same contract on the base branch (default) |
 | `"src/V1.sol:V1"` | Compare against another contract in the same build |
 
-**Minimal** — validate against flattened baselines (most common):
+**Minimal** — validate against the base branch (most common):
 
 ```json
 {
@@ -121,7 +121,7 @@ jobs:
     uses: BreadchainCoop/etherform/.github/workflows/_upgrade-safety.yml@main
 ```
 
-On the first run (no baselines yet), contracts are validated for upgradeability only.
+On the first run, contracts are validated for upgradeability only.
 
 ### Unsafe-allow overrides
 
@@ -202,7 +202,6 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
 | `node-version` | string | `'20'` | Node.js version for package installation |
 | `upgrades-config` | string | `'.github/upgrades.json'` | Path to upgrade safety config |
-| `upgrades-path` | string | `'test/upgrades'` | Path to flattened snapshots (baseline read from `{upgrades-path}/baseline`) |
 
 ### `_deploy-testnet.yml`
 
