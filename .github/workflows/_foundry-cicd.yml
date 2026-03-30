@@ -608,8 +608,6 @@ jobs:
               # === Base branch comparison (default) ===
               if [[ -n "$BASE_BUILD" ]] && git show "origin/${BASE_BRANCH}:${CONTRACT_PATH}" > /dev/null 2>&1; then
                 # Contract exists on base branch — compare storage layouts
-                echo "referenceBuildInfoDirs: $BASE_BUILD"
-                echo "referenceBuildInfoDirs ls: $(ls $BASE_BUILD)"
                 if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
                     --contract "$CONTRACT" \
                     --reference "base-build-info:${CONTRACT}" \
