@@ -131,12 +131,6 @@ on:
         type: boolean
         default: false
 
-      # Commit Lint Options
-      run-commitlint:
-        description: 'Enforce conventional commit messages'
-        type: boolean
-        default: false
-
     secrets:
       PRIVATE_KEY:
         description: 'Deployer wallet private key'
@@ -462,18 +456,6 @@ jobs:
           RPC_URL: ${{ secrets.RPC_URL }}
         run: halmos
 
-  commitlint:
-    name: Commit Lint
-    runs-on: ubuntu-latest
-    if: inputs.run-commitlint
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Run commitlint
-        uses: wagoid/commitlint-github-action@v5
 
   upgrade-safety:
     name: Upgrade Safety
