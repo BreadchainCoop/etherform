@@ -738,6 +738,7 @@ jobs:
 
           forge script ${{ inputs.deploy-script }} \
             --rpc-url "$RPC_URL" \
+            --private-key "$PRIVATE_KEY" \
             --broadcast \
             --slow \
             -vvvv
