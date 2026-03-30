@@ -17,6 +17,14 @@ on:
         description: 'Path to validation script'
         type: string
         default: 'script/upgrades/ValidateUpgrade.s.sol'
+      package-manager:
+        description: 'Package manager for Node.js dependencies (none, npm, yarn, pnpm)'
+        type: string
+        default: 'none'
+      node-version:
+        description: 'Node.js version for package installation'
+        type: string
+        default: '20'
 
 jobs:
   upgrade-safety:
@@ -30,6 +38,22 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Setup Node.js
+        if: inputs.package-manager != 'none'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - name: Install dependencies
+        if: inputs.package-manager != 'none'
+        run: |
+          case "${{ inputs.package-manager }}" in
+            npm)  npm ci ;;
+            yarn) yarn --frozen-lockfile ;;
+            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
+          esac
 
       - name: Run upgrade safety validation
         run: |

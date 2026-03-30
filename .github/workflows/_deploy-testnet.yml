@@ -25,6 +25,14 @@ on:
         description: 'Verify deployed contracts on Blockscout'
         type: boolean
         default: true
+      package-manager:
+        description: 'Package manager for Node.js dependencies (none, npm, yarn, pnpm)'
+        type: string
+        default: 'none'
+      node-version:
+        description: 'Node.js version for package installation'
+        type: string
+        default: '20'
     secrets:
       PRIVATE_KEY:
         required: true
@@ -46,6 +54,22 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Setup Node.js
+        if: inputs.package-manager != 'none'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - name: Install dependencies
+        if: inputs.package-manager != 'none'
+        run: |
+          case "${{ inputs.package-manager }}" in
+            npm)  npm ci ;;
+            yarn) yarn --frozen-lockfile ;;
+            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
+          esac
 
       - name: Read network config
         id: network
