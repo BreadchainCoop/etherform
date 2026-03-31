@@ -52,20 +52,14 @@ jobs:
           path: .etherform
           sparse-checkout: scripts
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Setup Node.js
-        if: inputs.package-manager != 'none'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
+          cache: ${{ inputs.package-manager != 'none' && inputs.package-manager || '' }}
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'

@@ -409,20 +409,14 @@ jobs:
           path: .etherform
           sparse-checkout: scripts
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Setup Node.js
-        if: inputs.package-manager != 'none'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
+          cache: ${{ inputs.package-manager != 'none' && inputs.package-manager || '' }}
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
@@ -451,7 +445,7 @@ jobs:
       always() &&
       needs.detect-changes.outputs.should-run == 'true' &&
       needs.ci.result == 'success' &&
-      (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
+      needs.upgrade-safety.result == 'success' &&
       inputs.deploy-on-pr &&
       github.event_name == 'pull_request'
     steps:
@@ -494,7 +488,7 @@ jobs:
           DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
         run: |
           source .etherform/scripts/deploy/prepare-env.sh
-          forge script ${{ inputs.deploy-script }} \
+          forge script "${{ inputs.deploy-script }}" \
             --rpc-url "$RPC_URL" \
             --private-key "$PRIVATE_KEY" \
             --broadcast \
