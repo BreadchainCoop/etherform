@@ -66,7 +66,7 @@ for entry in "${CONTRACTS[@]}"; do
   VERIFIED=0
   for check in $(seq 1 "$MAX_CHECKS"); do
     # Query Blockscout API for verification status
-    API_RESULT=$(curl -sf "${BLOCKSCOUT_URL}/api?module=contract&action=getabi&address=${CONTRACT_ADDR}" 2>/dev/null) || true
+    API_RESULT=$(curl -sf --connect-timeout 10 --max-time 30 "${BLOCKSCOUT_URL%/}/api?module=contract&action=getabi&address=${CONTRACT_ADDR}" 2>/dev/null) || true
     API_STATUS=$(echo "$API_RESULT" | jq -r '.status // "0"' 2>/dev/null) || API_STATUS="0"
 
     if [[ "$API_STATUS" == "1" ]]; then

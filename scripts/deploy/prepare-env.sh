@@ -13,6 +13,20 @@ fi
 if [[ -n "${DEPLOY_ENV_VARS:-}" ]]; then
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
-    export "${line?}"
+
+    # Expect KEY=VALUE; skip malformed lines
+    if [[ "$line" != *=* ]]; then
+      continue
+    fi
+
+    key=${line%%=*}
+    value=${line#*=}
+
+    # Validate KEY against a safe variable-name pattern
+    if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      continue
+    fi
+
+    export "$key=$value"
   done <<< "$DEPLOY_ENV_VARS"
 fi

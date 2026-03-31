@@ -27,6 +27,12 @@ if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
   BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' "$NETWORK_CONFIG")
 fi
 
+# Post-fallback validation: ensure we have a non-empty, HTTP(S) Blockscout URL
+if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" || ! "$BLOCKSCOUT_URL" =~ ^https?:// ]]; then
+  echo "::error::No valid blockscout_url found in $NETWORK_CONFIG"
+  exit 1
+fi
+
 NETWORK_NAME=$(jq -r --argjson cid "$CHAIN_ID" '
   (.testnets // [])
   | map(select(.chain_id == $cid))
