@@ -86,6 +86,17 @@ jobs:
             exit 0
           fi
 
+          # Check that contracts field exists
+          if ! jq -e 'has("contracts")' "$CONFIG" > /dev/null 2>&1; then
+            echo "::error::Missing 'contracts' field in $CONFIG — expected an array of contract entries"
+            {
+              echo "## Upgrade Safety Validation"
+              echo ""
+              echo "> **Error:** \`$CONFIG\` is missing the \`contracts\` field."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
           # Check for empty contracts array
           CONTRACT_COUNT=$(jq '.contracts | length' "$CONFIG")
           if [[ "$CONTRACT_COUNT" -eq 0 ]]; then
