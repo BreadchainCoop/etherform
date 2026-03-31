@@ -501,8 +501,12 @@ jobs:
             exit 0
           fi
 
-          # Check for empty contracts array
-          CONTRACT_COUNT=$(jq '.contracts | length' "$CONFIG")
+          # Check for contracts array and handle empty contracts
+          CONTRACT_COUNT=$(jq -r 'try (.contracts | length) catch "INVALID_CONTRACTS"' "$CONFIG")
+          if [[ "$CONTRACT_COUNT" == "INVALID_CONTRACTS" ]]; then
+            echo "::error::Invalid upgrades config at $CONFIG — \`.contracts\` must be an array"
+            exit 1
+          fi
           if [[ "$CONTRACT_COUNT" -eq 0 ]]; then
             echo "::warning::No contracts defined in $CONFIG — skipping upgrade safety validation"
             {
