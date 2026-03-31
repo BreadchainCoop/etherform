@@ -188,6 +188,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `coverage-post-comment` | boolean | `true` | Post coverage summary as a sticky PR comment |
 | `coverage-min-threshold` | number | `0` | Minimum coverage % to pass (0 = disabled) |
 | `run-halmos` | boolean | `false` | Run Halmos symbolic execution |
+| `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
 
 | Secret | Required | Description |
 |--------|----------|-------------|
@@ -203,6 +204,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `node-version` | string | `'20'` | Node.js version for package installation |
 | `upgrades-config` | string | `'.github/upgrades.json'` | Path to upgrade safety config |
 | `base-branch` | string | `'main'` | Base branch for upgrade safety comparison |
+| `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
 
 ### `_deploy-testnet.yml`
 
@@ -215,6 +217,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `verify-contracts` | boolean | `true` | Verify on Blockscout |
 | `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
 | `node-version` | string | `'20'` | Node.js version for package installation |
+| `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
 
 ### `_foundry-cicd.yml`
 
@@ -226,6 +229,8 @@ The all-in-one workflow accepts all inputs from the above workflows plus:
 | `contract-paths` | string | `src/**`, `script/**`, etc. | Paths to watch for changes |
 | `main-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 | `deploy-on-pr` | boolean | `false` | Deploy to testnet on PR |
+
+All workflows also accept `etherform-ref` (default: `'main'`) to control which etherform branch the scripts are checked out from. Override this when testing against an unreleased etherform branch.
 
 ## Scripts
 
