@@ -57,6 +57,10 @@ on:
         description: 'Run Halmos symbolic execution'
         type: boolean
         default: false
+      etherform-ref:
+        description: 'Git ref for etherform scripts checkout (default: main)'
+        type: string
+        default: 'main'
     secrets:
       RPC_URL:
         description: 'RPC endpoint for fork-based tests'
@@ -159,6 +163,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: BreadchainCoop/etherform
+          ref: ${{ inputs.etherform-ref }}
           path: .etherform
           sparse-checkout: scripts
 

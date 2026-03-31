@@ -118,6 +118,12 @@ on:
         type: boolean
         default: false
 
+      # Etherform Options
+      etherform-ref:
+        description: 'Git ref for etherform scripts checkout (default: main)'
+        type: string
+        default: 'main'
+
     secrets:
       PRIVATE_KEY:
         description: 'Deployer wallet private key'
@@ -277,6 +283,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: BreadchainCoop/etherform
+          ref: ${{ inputs.etherform-ref }}
           path: .etherform
           sparse-checkout: scripts
 
@@ -398,6 +405,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: BreadchainCoop/etherform
+          ref: ${{ inputs.etherform-ref }}
           path: .etherform
           sparse-checkout: scripts
 
@@ -456,6 +464,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: BreadchainCoop/etherform
+          ref: ${{ inputs.etherform-ref }}
           path: .etherform
           sparse-checkout: scripts
 
