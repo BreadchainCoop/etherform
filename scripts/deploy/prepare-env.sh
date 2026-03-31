@@ -13,6 +13,6 @@ fi
 if [[ -n "${DEPLOY_ENV_VARS:-}" ]]; then
   while IFS= read -r line; do
     [[ -z "$line" || "$line" == \#* ]] && continue
-    export "$line"
+    export "${line?}"
   done <<< "$DEPLOY_ENV_VARS"
 fi

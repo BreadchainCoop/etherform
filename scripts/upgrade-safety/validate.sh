@@ -68,7 +68,7 @@ if [[ "$NEEDS_BASE" == "true" ]]; then
   BASE_DIR=$(mktemp -d)
 
   if git worktree add --detach "$BASE_DIR" "origin/$BASE_BRANCH" 2>/dev/null; then
-    (cd "$BASE_DIR" && git submodule update --init --recursive 2>/dev/null || true)
+    (cd "$BASE_DIR" && { git submodule update --init --recursive 2>/dev/null || true; })
 
     # Install dependencies in base worktree if needed
     if [[ "$PACKAGE_MANAGER" != "none" ]]; then

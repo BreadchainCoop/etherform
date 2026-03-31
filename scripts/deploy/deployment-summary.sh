@@ -12,13 +12,15 @@ set -euo pipefail
 : "${BLOCKSCOUT_URL:?BLOCKSCOUT_URL is required}"
 TITLE="${SUMMARY_TITLE:-Deployment Summary}"
 
-echo "## $TITLE" >> "$GITHUB_STEP_SUMMARY"
-echo "" >> "$GITHUB_STEP_SUMMARY"
-echo "| Contract | Address | Explorer |" >> "$GITHUB_STEP_SUMMARY"
-echo "|----------|---------|----------|" >> "$GITHUB_STEP_SUMMARY"
+{
+  echo "## $TITLE"
+  echo ""
+  echo "| Contract | Address | Explorer |"
+  echo "|----------|---------|----------|"
 
-while read -r line; do
-  CONTRACT=$(echo "$line" | cut -d: -f1)
-  ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-  echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> "$GITHUB_STEP_SUMMARY"
-done < deployment-summary.txt
+  while read -r line; do
+    CONTRACT=$(echo "$line" | cut -d: -f1)
+    ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
+    echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |"
+  done < deployment-summary.txt
+} >> "$GITHUB_STEP_SUMMARY"

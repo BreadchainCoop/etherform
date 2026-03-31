@@ -43,11 +43,13 @@ done < src-rows.txt
 pct() { [ "$2" -eq 0 ] && echo "100.00% (0/0)" || printf "%.2f%% (%d/%d)" "$(echo "scale=4; $1 * 100 / $2" | bc)" "$1" "$2"; }
 
 # Compute numeric percentages for threshold checking
-num_pct() { [ "$2" -eq 0 ] && echo "100.00" || echo "scale=2; $1 * 100 / $2" | bc; }
-echo "lines_pct=$(num_pct $total_lines_hit $total_lines_all)" >> "$GITHUB_OUTPUT"
-echo "stmts_pct=$(num_pct $total_stmts_hit $total_stmts_all)" >> "$GITHUB_OUTPUT"
-echo "branch_pct=$(num_pct $total_branch_hit $total_branch_all)" >> "$GITHUB_OUTPUT"
-echo "funcs_pct=$(num_pct $total_funcs_hit $total_funcs_all)" >> "$GITHUB_OUTPUT"
+num_pct() { if [ "$2" -eq 0 ]; then echo "100.00"; else echo "scale=2; $1 * 100 / $2" | bc; fi; }
+{
+  echo "lines_pct=$(num_pct $total_lines_hit $total_lines_all)"
+  echo "stmts_pct=$(num_pct $total_stmts_hit $total_stmts_all)"
+  echo "branch_pct=$(num_pct $total_branch_hit $total_branch_all)"
+  echo "funcs_pct=$(num_pct $total_funcs_hit $total_funcs_all)"
+} >> "$GITHUB_OUTPUT"
 
 # Build the markdown comment
 {
