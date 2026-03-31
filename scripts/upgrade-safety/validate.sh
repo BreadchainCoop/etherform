@@ -42,10 +42,49 @@ fi
 # Check for empty contracts array — fail if base branch has entries (prevents bypass via emptying the config)
 CONTRACT_COUNT=$(jq '.contracts | length' "$UPGRADES_CONFIG")
 if [[ "$CONTRACT_COUNT" -eq 0 ]]; then
-  git fetch origin "$BASE_BRANCH" 2>/dev/null || true
+  # Ensure we can access the base branch; fail hard unless ALLOW_FALLBACK=true
+  if ! git fetch origin "$BASE_BRANCH" 2>/dev/null; then
+    if [[ "$ALLOW_FALLBACK" != "true" ]]; then
+      echo "::error::Failed to fetch base branch $BASE_BRANCH — cannot safely validate empty contracts configuration"
+      {
+        echo "## Upgrade Safety Validation"
+        echo ""
+        echo "> **Error:** Failed to fetch base branch \`$BASE_BRANCH\`. Cannot determine previous contracts to validate an empty \`$UPGRADES_CONFIG\`."
+      } >> "$GITHUB_STEP_SUMMARY"
+      exit 1
+    else
+      echo "::warning::Failed to fetch base branch $BASE_BRANCH — proceeding with fallback because ALLOW_FALLBACK=true"
+    fi
+  fi
+
   BASE_CONTRACT_COUNT=0
   if git show "origin/${BASE_BRANCH}:${UPGRADES_CONFIG}" > /dev/null 2>&1; then
-    BASE_CONTRACT_COUNT=$(git show "origin/${BASE_BRANCH}:${UPGRADES_CONFIG}" | jq '.contracts | length' 2>/dev/null) || BASE_CONTRACT_COUNT=0
+    if ! BASE_CONTRACT_COUNT=$(git show "origin/${BASE_BRANCH}:${UPGRADES_CONFIG}" | jq '.contracts | length' 2>/dev/null); then
+      if [[ "$ALLOW_FALLBACK" != "true" ]]; then
+        echo "::error::Failed to parse contracts from $UPGRADES_CONFIG on base branch $BASE_BRANCH"
+        {
+          echo "## Upgrade Safety Validation"
+          echo ""
+          echo "> **Error:** Could not parse contracts from \`$UPGRADES_CONFIG\` on base branch \`$BASE_BRANCH\`. Cannot safely validate an empty config."
+        } >> "$GITHUB_STEP_SUMMARY"
+        exit 1
+      else
+        echo "::warning::Failed to parse contracts from $UPGRADES_CONFIG on base branch $BASE_BRANCH — proceeding with fallback because ALLOW_FALLBACK=true"
+        BASE_CONTRACT_COUNT=0
+      fi
+    fi
+  else
+    if [[ "$ALLOW_FALLBACK" != "true" ]]; then
+      echo "::error::Unable to read $UPGRADES_CONFIG from base branch $BASE_BRANCH — cannot safely validate empty contracts configuration"
+      {
+        echo "## Upgrade Safety Validation"
+        echo ""
+        echo "> **Error:** Could not read \`$UPGRADES_CONFIG\` from base branch \`$BASE_BRANCH\`. Cannot determine previous contracts to validate an empty config."
+      } >> "$GITHUB_STEP_SUMMARY"
+      exit 1
+    else
+      echo "::warning::Unable to read $UPGRADES_CONFIG from base branch $BASE_BRANCH — proceeding with fallback because ALLOW_FALLBACK=true"
+    fi
   fi
 
   if [[ "$BASE_CONTRACT_COUNT" -gt 0 ]]; then
