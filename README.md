@@ -199,10 +199,10 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
-| `validation-script` | string | `'script/upgrades/ValidateUpgrade.s.sol'` | Validation script path |
 | `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
 | `node-version` | string | `'20'` | Node.js version for package installation |
 | `upgrades-config` | string | `'.github/upgrades.json'` | Path to upgrade safety config |
+| `base-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 
 ### `_deploy-testnet.yml`
 
