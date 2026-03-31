@@ -64,9 +64,6 @@ jobs:
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
           esac
 
-      - name: Install OpenZeppelin upgrades-core
-        run: npm install -g @openzeppelin/upgrades-core
-
       - name: Build contracts
         run: forge build
 
