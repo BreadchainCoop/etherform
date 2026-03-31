@@ -1,0 +1,16 @@
+{
+  "testnets": [
+    {
+      "name": "sepolia",
+      "chain_id": 11155111,
+      "blockscout_url": "https://eth-sepolia.blockscout.com",
+      "environment": "testnet"
+    },
+    {
+      "name": "local",
+      "chain_id": 31337,
+      "blockscout_url": "http://localhost:4000",
+      "environment": "local"
+    }
+  ]
+}

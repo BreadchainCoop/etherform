@@ -273,6 +273,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Checkout etherform scripts
+        uses: actions/checkout@v4
+        with:
+          repository: BreadchainCoop/etherform
+          path: .etherform
+          sparse-checkout: scripts
+
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
@@ -307,66 +314,9 @@ jobs:
 
       - name: Extract summary table
         id: summary
-        run: |
-          # Extract the final summary table (box-drawing characters)
-          awk '/^╭/,/^╰/' coverage-raw.txt > coverage-table.txt
-
-          # Filter to only source files and compute totals from raw counts
-          grep '^|' coverage-table.txt | grep '${{ inputs.coverage-source-filter }}' > src-rows.txt || true
-
-          # Sum up hit/total for each metric across source files
-          total_lines_hit=0; total_lines_all=0
-          total_stmts_hit=0; total_stmts_all=0
-          total_branch_hit=0; total_branch_all=0
-          total_funcs_hit=0; total_funcs_all=0
-
-          while IFS='|' read -r _ file lines stmts branches funcs _; do
-            extract() { echo "$1" | grep -oP '\(\K[0-9]+/[0-9]+' | tr '/' ' '; }
-            read lh lt <<< "$(extract "$lines")"
-            read sh st <<< "$(extract "$stmts")"
-            read bh bt <<< "$(extract "$branches")"
-            read fh ft <<< "$(extract "$funcs")"
-            total_lines_hit=$((total_lines_hit + lh)); total_lines_all=$((total_lines_all + lt))
-            total_stmts_hit=$((total_stmts_hit + sh)); total_stmts_all=$((total_stmts_all + st))
-            total_branch_hit=$((total_branch_hit + bh)); total_branch_all=$((total_branch_all + bt))
-            total_funcs_hit=$((total_funcs_hit + fh)); total_funcs_all=$((total_funcs_all + ft))
-          done < src-rows.txt
-
-          pct() { [ "$2" -eq 0 ] && echo "100.00% (0/0)" || printf "%.2f%% (%d/%d)" "$(echo "scale=4; $1 * 100 / $2" | bc)" "$1" "$2"; }
-
-          # Compute numeric percentages for threshold checking
-          num_pct() { [ "$2" -eq 0 ] && echo "100.00" || echo "scale=2; $1 * 100 / $2" | bc; }
-          echo "lines_pct=$(num_pct $total_lines_hit $total_lines_all)" >> $GITHUB_OUTPUT
-          echo "stmts_pct=$(num_pct $total_stmts_hit $total_stmts_all)" >> $GITHUB_OUTPUT
-          echo "branch_pct=$(num_pct $total_branch_hit $total_branch_all)" >> $GITHUB_OUTPUT
-          echo "funcs_pct=$(num_pct $total_funcs_hit $total_funcs_all)" >> $GITHUB_OUTPUT
-
-          # Build the markdown comment
-          {
-            echo "## Coverage Report"
-            echo ""
-            echo "| Metric | Coverage |"
-            echo "|--------|----------|"
-            echo "| Lines | $(pct $total_lines_hit $total_lines_all) |"
-            echo "| Statements | $(pct $total_stmts_hit $total_stmts_all) |"
-            echo "| Branches | $(pct $total_branch_hit $total_branch_all) |"
-            echo "| Functions | $(pct $total_funcs_hit $total_funcs_all) |"
-            echo ""
-            echo "<details><summary>Coverage by file</summary>"
-            echo ""
-            echo "| File | Lines | Statements | Branches | Functions |"
-            echo "|------|-------|------------|----------|-----------|"
-            while IFS='|' read -r _ file lines stmts branches funcs _; do
-              file=$(echo "$file" | xargs)
-              lines=$(echo "$lines" | xargs)
-              stmts=$(echo "$stmts" | xargs)
-              branches=$(echo "$branches" | xargs)
-              funcs=$(echo "$funcs" | xargs)
-              echo "| \`$file\` | $lines | $stmts | $branches | $funcs |"
-            done < src-rows.txt
-            echo ""
-            echo "</details>"
-          } > coverage-comment.md
+        env:
+          COVERAGE_SOURCE_FILTER: ${{ inputs.coverage-source-filter }}
+        run: bash .etherform/scripts/coverage/extract-summary.sh
 
       - name: Post coverage comment
         if: inputs.coverage-post-comment && github.event_name == 'pull_request'
@@ -376,24 +326,13 @@ jobs:
 
       - name: Check coverage threshold
         if: inputs.coverage-min-threshold > 0
-        run: |
-          THRESHOLD=${{ inputs.coverage-min-threshold }}
-          FAILED=0
-          for metric in "Lines:${{ steps.summary.outputs.lines_pct }}" \
-                        "Statements:${{ steps.summary.outputs.stmts_pct }}" \
-                        "Branches:${{ steps.summary.outputs.branch_pct }}" \
-                        "Functions:${{ steps.summary.outputs.funcs_pct }}"; do
-            NAME="${metric%%:*}"
-            VALUE="${metric#*:}"
-            if (( $(echo "$VALUE < $THRESHOLD" | bc -l) )); then
-              echo "::error::$NAME coverage ($VALUE%) is below threshold ($THRESHOLD%)"
-              FAILED=1
-            fi
-          done
-          if [[ $FAILED -eq 1 ]]; then
-            exit 1
-          fi
-          echo "All coverage metrics meet the $THRESHOLD% threshold"
+        env:
+          THRESHOLD: ${{ inputs.coverage-min-threshold }}
+          LINES_PCT: ${{ steps.summary.outputs.lines_pct }}
+          STMTS_PCT: ${{ steps.summary.outputs.stmts_pct }}
+          BRANCH_PCT: ${{ steps.summary.outputs.branch_pct }}
+          FUNCS_PCT: ${{ steps.summary.outputs.funcs_pct }}
+        run: bash .etherform/scripts/coverage/check-threshold.sh
 
   halmos:
     name: Symbolic Execution
@@ -455,6 +394,13 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Checkout etherform scripts
+        uses: actions/checkout@v4
+        with:
+          repository: BreadchainCoop/etherform
+          path: .etherform
+          sparse-checkout: scripts
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -483,171 +429,11 @@ jobs:
         run: forge build --build-info --extra-output storageLayout
 
       - name: Validate upgrade safety
-        run: |
-          set -euo pipefail
-
-          CONFIG="${{ inputs.upgrades-config }}"
-          BASE_BRANCH="${{ inputs.main-branch }}"
-          CURRENT_BUILD="out/build-info"
-
-          # Check if config exists
-          if [[ ! -f "$CONFIG" ]]; then
-            echo "::warning::No upgrades config found at $CONFIG — skipping upgrade safety validation"
-            {
-              echo "## Upgrade Safety Validation"
-              echo ""
-              echo "> No \`$CONFIG\` found. Skipping validation."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          # Check for contracts array and handle empty contracts
-          CONTRACT_COUNT=$(jq -r 'try (.contracts | length) catch "INVALID_CONTRACTS"' "$CONFIG")
-          if [[ "$CONTRACT_COUNT" == "INVALID_CONTRACTS" ]]; then
-            echo "::error::Invalid upgrades config at $CONFIG — \`.contracts\` must be an array"
-            exit 1
-          fi
-          if [[ "$CONTRACT_COUNT" -eq 0 ]]; then
-            echo "::warning::No contracts defined in $CONFIG — skipping upgrade safety validation"
-            {
-              echo "## Upgrade Safety Validation"
-              echo ""
-              echo "> No contracts defined in \`$CONFIG\`. Skipping validation."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          # Check if any contracts need base branch comparison (no explicit reference)
-          NEEDS_BASE=false
-          while IFS= read -r entry; do
-            REF_VALUE=$(echo "$entry" | jq -c '.reference // empty')
-            if [[ -z "$REF_VALUE" || "$REF_VALUE" == "null" ]]; then
-              NEEDS_BASE=true
-              break
-            fi
-          done < <(jq -c '.contracts[]' "$CONFIG")
-
-          # Build base branch in a worktree if needed
-          BASE_BUILD=""
-          BASE_DIR=""
-          if [[ "$NEEDS_BASE" == "true" ]]; then
-            echo "Building base branch ($BASE_BRANCH) for comparison..."
-            git fetch origin "$BASE_BRANCH" 2>/dev/null || true
-            BASE_DIR=$(mktemp -d)
-
-            if git worktree add --detach "$BASE_DIR" "origin/$BASE_BRANCH" 2>/dev/null; then
-              (cd "$BASE_DIR" && git submodule update --init --recursive 2>/dev/null || true)
-
-              # Install dependencies in base worktree if needed
-              if [[ "${{ inputs.package-manager }}" != "none" ]]; then
-                (cd "$BASE_DIR" && case "${{ inputs.package-manager }}" in
-                  npm)  npm ci ;;
-                  yarn) yarn --frozen-lockfile ;;
-                  pnpm) corepack enable && pnpm install --frozen-lockfile ;;
-                esac) || echo "::warning::Failed to install dependencies in base branch"
-              fi
-
-              if (cd "$BASE_DIR" && forge build --build-info --extra-output storageLayout 2>&1); then
-                mv "${BASE_DIR}/out/build-info" "${BASE_DIR}/out/base-build-info"
-                BASE_BUILD="${BASE_DIR}/out/base-build-info"
-                echo "Base branch built successfully"
-              else
-                echo "::warning::Failed to build base branch — contracts without explicit reference will be validated for upgradeability only"
-              fi
-            else
-              echo "::warning::Could not checkout base branch '$BASE_BRANCH' — contracts without explicit reference will be validated for upgradeability only"
-            fi
-          fi
-
-          PASSED=0
-          FAILED=0
-          SUMMARY=""
-
-          # Validate each contract
-          while IFS= read -r entry; do
-            CONTRACT=$(echo "$entry" | jq -r '.contract')
-            REF_VALUE=$(echo "$entry" | jq -c '.reference // empty')
-            CONTRACT_PATH="${CONTRACT%%:*}"
-
-            echo "::group::Validating $CONTRACT"
-
-            if [[ -z "$REF_VALUE" || "$REF_VALUE" == "null" ]]; then
-              # === Base branch comparison (default) ===
-              if [[ -n "$BASE_BUILD" ]] && git show "origin/${BASE_BRANCH}:${CONTRACT_PATH}" > /dev/null 2>&1; then
-                # Contract exists on base branch — compare storage layouts
-                if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
-                    --contract "$CONTRACT" \
-                    --reference "base-build-info:${CONTRACT}" \
-                    --referenceBuildInfoDirs "$BASE_BUILD" 2>&1); then
-                  echo "$OUTPUT"
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${BASE_BRANCH}\` branch | Pass |"$'\n'
-                  PASSED=$((PASSED + 1))
-                else
-                  echo "$OUTPUT"
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${BASE_BRANCH}\` branch | **FAIL** |"$'\n'
-                  FAILED=$((FAILED + 1))
-                fi
-              else
-                # Contract doesn't exist on base branch or base build failed — validate upgradeability only
-                echo "Contract not found on $BASE_BRANCH or base build unavailable, validating upgradeability only..."
-                if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
-                    --contract "$CONTRACT" 2>&1); then
-                  echo "$OUTPUT"
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (new contract) | Pass |"$'\n'
-                  PASSED=$((PASSED + 1))
-                else
-                  echo "$OUTPUT"
-                  SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (new contract) | **FAIL** |"$'\n'
-                  FAILED=$((FAILED + 1))
-                fi
-              fi
-
-            elif echo "$REF_VALUE" | jq -e 'type == "string"' > /dev/null 2>&1; then
-              # === Contract qualifier reference ===
-              QUALIFIER=$(echo "$entry" | jq -r '.reference')
-              if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
-                  --contract "$CONTRACT" \
-                  --reference "$QUALIFIER" 2>&1); then
-                echo "$OUTPUT"
-                SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${QUALIFIER}\` | Pass |"$'\n'
-                PASSED=$((PASSED + 1))
-              else
-                echo "$OUTPUT"
-                SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${QUALIFIER}\` | **FAIL** |"$'\n'
-                FAILED=$((FAILED + 1))
-              fi
-
-            else
-              echo "::error::Invalid reference format for $CONTRACT"
-              SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (invalid reference) | **FAIL** |"$'\n'
-              FAILED=$((FAILED + 1))
-            fi
-
-            echo "::endgroup::"
-          done < <(jq -c '.contracts[]' "$CONFIG")
-
-          # Clean up worktree
-          if [[ -n "$BASE_DIR" ]]; then
-            git worktree remove "$BASE_DIR" --force 2>/dev/null || true
-          fi
-
-          # Write Step Summary
-          {
-            echo "## Upgrade Safety Validation"
-            echo ""
-            echo "| Contract | Reference | Result |"
-            echo "|----------|-----------|--------|"
-            echo -n "$SUMMARY"
-            echo ""
-            echo "**${PASSED} passed, ${FAILED} failed**"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [[ "$FAILED" -gt 0 ]]; then
-            echo "::error::${FAILED} contract(s) failed upgrade safety validation"
-            exit 1
-          fi
-
-          echo "All contracts passed upgrade safety validation"
+        env:
+          UPGRADES_CONFIG: ${{ inputs.upgrades-config }}
+          BASE_BRANCH: ${{ inputs.main-branch }}
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
+        run: bash .etherform/scripts/upgrade-safety/validate.sh
 
   deploy-testnet:
     name: Deploy Testnet
@@ -665,6 +451,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Checkout etherform scripts
+        uses: actions/checkout@v4
+        with:
+          repository: BreadchainCoop/etherform
+          path: .etherform
+          sparse-checkout: scripts
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -691,18 +484,7 @@ jobs:
           RPC_URL: ${{ secrets.RPC_URL }}
           DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
         run: |
-          if [[ "$PRIVATE_KEY" != 0x* ]]; then
-            export PRIVATE_KEY="0x$PRIVATE_KEY"
-          fi
-
-          # Export user-provided environment variables
-          if [[ -n "$DEPLOY_ENV_VARS" ]]; then
-            while IFS= read -r line; do
-              [[ -z "$line" || "$line" == \#* ]] && continue
-              export "$line"
-            done <<< "$DEPLOY_ENV_VARS"
-          fi
-
+          source .etherform/scripts/deploy/prepare-env.sh
           forge script ${{ inputs.deploy-script }} \
             --rpc-url "$RPC_URL" \
             --private-key "$PRIVATE_KEY" \
@@ -715,175 +497,25 @@ jobs:
 
       - name: Parse deployment addresses
         id: parse
-        run: |
-          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
-          if [[ -z "$BROADCAST_FILE" ]]; then
-            echo "No broadcast file found"
-            exit 1
-          fi
-          echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
-
-          # Extract the chain ID from the broadcast file path (broadcast/<script>/<chain_id>/run-latest.json)
-          CHAIN_ID=$(echo "$BROADCAST_FILE" | sed -E 's|.*/([0-9]+)/run-latest\.json$|\1|')
-          echo "chain_id=$CHAIN_ID" >> $GITHUB_OUTPUT
-          echo "Deployed to chain ID: $CHAIN_ID"
-
-          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
+        run: bash .etherform/scripts/deploy/parse-broadcast.sh
 
       - name: Resolve Blockscout URL from chain ID
         id: network
-        run: |
-          CHAIN_ID="${{ steps.parse.outputs.chain_id }}"
-          CONFIG="${{ inputs.network-config-path }}"
-
-          # Search testnets array for a matching chain_id
-          BLOCKSCOUT_URL=$(jq -r --argjson cid "$CHAIN_ID" '
-            (.testnets // [])
-            | map(select(.chain_id == $cid))
-            | first
-            | .blockscout_url // empty
-          ' "$CONFIG" 2>/dev/null) || true
-
-          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
-            echo "::warning::No Blockscout URL found for chain ID $CHAIN_ID in $CONFIG. Falling back to testnets[0]."
-            BLOCKSCOUT_URL=$(jq -r '.testnets[0].blockscout_url' "$CONFIG")
-          fi
-
-          NETWORK_NAME=$(jq -r --argjson cid "$CHAIN_ID" '
-            (.testnets // [])
-            | map(select(.chain_id == $cid))
-            | first
-            | .name // "unknown"
-          ' "$CONFIG" 2>/dev/null) || NETWORK_NAME="unknown"
-
-          # Ensure BLOCKSCOUT_URL is actually BLOCKSCOUT API
-          BLOCKSCOUT_API="${BLOCKSCOUT_URL%/}/api/"
-
-          echo "Checking Blockscout API at: $BLOCKSCOUT_API"
-
-          RESPONSE=$(curl -sS --max-time 10 \
-          "${BLOCKSCOUT_API}?module=block&action=eth_block_number" || true)
-
-          # Check it's valid JSON and has expected shape
-          STATUS=$(echo "$RESPONSE" | jq -r '.jsonrpc // empty' 2>/dev/null || true)
-
-          if [[ "$STATUS" != "2.0" ]]; then
-            echo "::error::Invalid Blockscout API URL: $BLOCKSCOUT_API"
-            echo "Response was:"
-            echo "$RESPONSE"
-            exit 1
-          fi
-
-          echo "✓ Blockscout API looks valid"
-
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
-          echo "Resolved Blockscout URL for chain $CHAIN_ID: $BLOCKSCOUT_URL ($NETWORK_NAME)"
+        env:
+          CHAIN_ID: ${{ steps.parse.outputs.chain_id }}
+          NETWORK_CONFIG: ${{ inputs.network-config-path }}
+        run: bash .etherform/scripts/deploy/resolve-network.sh
 
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-          ETH_RPC_URL: ${{ secrets.RPC_URL }}
-        run: |
-          echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
-          done < deployment-summary.txt
+          SUMMARY_TITLE: Testnet Deployment Summary
+        run: bash .etherform/scripts/deploy/deployment-summary.sh
 
       - name: Verify contracts on Blockscout
         if: inputs.verify-contracts
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
-        run: |
-          # Validate Blockscout URL format (fail fast on bad URL)
-          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
-            echo "::error::BLOCKSCOUT_URL is empty or not configured. Check deploy-networks.json."
-            exit 1
-          fi
-          if [[ ! "$BLOCKSCOUT_URL" =~ ^https?:// ]]; then
-            echo "::error::BLOCKSCOUT_URL has invalid format (got: '$BLOCKSCOUT_URL'). Must start with http:// or https://."
-            exit 1
-          fi
-
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-
-          # Collect all CREATE contracts
-          CONTRACTS=()
-          while read -r tx; do
-            name=$(echo "$tx" | jq -r '.contractName')
-            addr=$(echo "$tx" | jq -r '.contractAddress')
-            CONTRACTS+=("${name}:${addr}")
-          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
-
-          echo "Found ${#CONTRACTS[@]} contracts to verify"
-
-          # Phase 1: Submit all contracts for verification (no --watch)
-          for entry in "${CONTRACTS[@]}"; do
-            CONTRACT_NAME="${entry%%:*}"
-            CONTRACT_ADDR="${entry#*:}"
-            echo "Submitting $CONTRACT_NAME ($CONTRACT_ADDR) for verification..."
-            SUBMIT_OUTPUT=$(forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
-              --verifier blockscout \
-              --verifier-url "${BLOCKSCOUT_URL}/api" \
-              --guess-constructor-args 2>&1) || true
-            echo "$SUBMIT_OUTPUT"
-            if echo "$SUBMIT_OUTPUT" | grep -qi "already verified"; then
-              echo "  → already verified"
-            fi
-          done
-
-          # Phase 2: Wait for Blockscout to process the verification queue
-          echo "Waiting 60s for Blockscout to process submissions..."
-          sleep 60
-
-          # Phase 3: Check verification status via API, retry unverified contracts
-          VERIFY_FAILED=0
-          MAX_CHECKS=10
-          CHECK_DELAY=30
-
-          for entry in "${CONTRACTS[@]}"; do
-            CONTRACT_NAME="${entry%%:*}"
-            CONTRACT_ADDR="${entry#*:}"
-
-            VERIFIED=0
-            for check in $(seq 1 $MAX_CHECKS); do
-              # Query Blockscout API for verification status
-              API_RESULT=$(curl -sf "${BLOCKSCOUT_URL}/api?module=contract&action=getabi&address=${CONTRACT_ADDR}" 2>/dev/null) || true
-              API_STATUS=$(echo "$API_RESULT" | jq -r '.status // "0"' 2>/dev/null) || API_STATUS="0"
-
-              if [[ "$API_STATUS" == "1" ]]; then
-                echo "✓ $CONTRACT_NAME ($CONTRACT_ADDR) verified"
-                VERIFIED=1
-                break
-              fi
-
-              if [[ $check -lt $MAX_CHECKS ]]; then
-                echo "  $CONTRACT_NAME not yet verified (check $check/$MAX_CHECKS), resubmitting and waiting ${CHECK_DELAY}s..."
-                # Resubmit to ensure it's in the queue
-                forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
-                  --verifier blockscout \
-                  --verifier-url "${BLOCKSCOUT_URL}/api" \
-                  --guess-constructor-args 2>&1 || true
-                sleep $CHECK_DELAY
-              fi
-            done
-
-            if [[ $VERIFIED -eq 0 ]]; then
-              echo "::error::Verification failed for $CONTRACT_NAME ($CONTRACT_ADDR) after $MAX_CHECKS checks"
-              VERIFY_FAILED=1
-            fi
-          done
-
-          if [[ $VERIFY_FAILED -eq 1 ]]; then
-            echo "::error::One or more contracts failed verification"
-            exit 1
-          fi
-
-          echo "All contracts verified successfully"
-
+          BROADCAST_FILE: ${{ steps.parse.outputs.broadcast_file }}
+        run: bash .etherform/scripts/deploy/verify-blockscout.sh

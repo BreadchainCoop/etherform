@@ -226,3 +226,15 @@ The all-in-one workflow accepts all inputs from the above workflows plus:
 | `contract-paths` | string | `src/**`, `script/**`, etc. | Paths to watch for changes |
 | `main-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 | `deploy-on-pr` | boolean | `false` | Deploy to testnet on PR |
+
+## Scripts
+
+Shared logic is extracted into modular bash scripts under `scripts/`. Workflows check out these scripts at runtime via `actions/checkout`. The scripts are independently testable.
+
+| Directory | Scripts | Purpose |
+|-----------|---------|---------|
+| `scripts/deploy/` | `prepare-env.sh`, `parse-broadcast.sh`, `resolve-network.sh`, `deployment-summary.sh`, `verify-blockscout.sh` | Deployment helpers |
+| `scripts/coverage/` | `extract-summary.sh`, `check-threshold.sh` | Coverage reporting |
+| `scripts/upgrade-safety/` | `validate.sh` | Upgrade safety validation |
+
+Run tests locally: `bash tests/test-*.sh`

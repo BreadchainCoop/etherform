@@ -1,0 +1,42 @@
+name: Test Scripts
+
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/**', 'tests/**', '.github/workflows/test.yml']
+  pull_request:
+    paths: ['scripts/**', 'tests/**', '.github/workflows/test.yml']
+
+jobs:
+  shellcheck:
+    name: ShellCheck Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck on all scripts
+        run: find scripts/ -name '*.sh' -exec shellcheck -s bash {} +
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test prepare-env
+        run: bash tests/test-prepare-env.sh
+
+      - name: Test parse-broadcast
+        run: bash tests/test-parse-broadcast.sh
+
+      - name: Test resolve-network
+        run: bash tests/test-resolve-network.sh
+
+      - name: Test deployment-summary
+        run: bash tests/test-deployment-summary.sh
+
+      - name: Test extract-summary
+        run: bash tests/test-extract-summary.sh
+
+      - name: Test check-threshold
+        run: bash tests/test-check-threshold.sh
