@@ -6,10 +6,9 @@ Reusable GitHub Actions workflows for Foundry smart contract CI/CD with upgrade 
 
 | Workflow | Description |
 |----------|-------------|
-| `_ci.yml` | Build, test, format check, coverage, Halmos, and commit lint |
+| `_ci.yml` | Build, test, format check, coverage, and Halmos |
 | `_upgrade-safety.yml` | OpenZeppelin upgrade safety validation |
 | `_deploy-testnet.yml` | Testnet deployment with Blockscout verification |
-| `_deploy-mainnet.yml` | Mainnet deployment with matrix support and 3-tier snapshot rotation |
 | `_foundry-cicd.yml` | All-in-one orchestrator combining all of the above |
 
 ## Usage
@@ -50,38 +49,92 @@ jobs:
       run-coverage: true
       coverage-min-threshold: 80
       run-halmos: true
-      run-commitlint: true
     secrets:
       RPC_URL: ${{ secrets.RPC_URL }}
 ```
 
-### Deploy pipeline
+## Upgrade Safety
+
+Etherform validates upgrade safety using the [OpenZeppelin upgrades-core CLI](https://www.npmjs.com/package/@openzeppelin/upgrades-core), which checks storage layout compatibility, initializer safety, and proxy semantics.
+
+### How it works
+
+1. **On PR**: The upgrade-safety job checks out the base branch via git worktree, builds it, and compares each contract's storage layout against the current branch using the OZ CLI
+2. **Next PR**: Validates against the latest base branch
+
+### Setup
+
+#### 1. Add `foundry.toml` settings
+
+```toml
+build_info = true
+extra_output = ["storageLayout"]
+```
+
+#### 2. Create `.github/upgrades.json`
+
+Each entry specifies a contract to validate. The `reference` field controls what to compare against:
+
+| `reference` value | Behavior |
+|---|---|
+| Omitted / `null` | Compare against the same contract on the base branch (default) |
+| `"src/V1.sol:V1"` | Compare against another contract in the same build |
+
+**Minimal** — validate against the base branch (most common):
+
+```json
+{
+  "contracts": [
+    { "contract": "src/Greeter.sol:Greeter" },
+    { "contract": "src/Token.sol:Token" }
+  ]
+}
+```
+
+**With explicit contract reference** — compare against a V1 contract kept in the repo:
+
+```json
+{
+  "contracts": [
+    {
+      "contract": "src/GreeterV2.sol:GreeterV2",
+      "reference": "src/GreeterV1.sol:GreeterV1"
+    }
+  ]
+}
+```
+
+#### 3. Use the workflow
 
 ```yaml
-# .github/workflows/deploy.yml
-name: Deploy
+# .github/workflows/ci.yml
+name: CI
 
-on:
-  push:
-    branches: [main]
+on: [push, pull_request]
 
 jobs:
   ci:
     uses: BreadchainCoop/etherform/.github/workflows/_ci.yml@main
-    with:
-      package-manager: yarn
-    secrets:
-      RPC_URL: ${{ secrets.RPC_URL }}
 
-  deploy:
+  upgrade-safety:
     needs: [ci]
-    uses: BreadchainCoop/etherform/.github/workflows/_deploy-mainnet.yml@main
-    with:
-      package-manager: yarn
-    secrets:
-      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-      RPC_URL: ${{ secrets.RPC_URL }}
+    uses: BreadchainCoop/etherform/.github/workflows/_upgrade-safety.yml@main
 ```
+
+On the first run, contracts are validated for upgradeability only.
+
+### Unsafe-allow overrides
+
+Use NatSpec annotations in your Solidity source:
+
+```solidity
+/// @custom:oz-upgrades-unsafe-allow delegatecall
+contract MyContract is Initializable {
+    // ...
+}
+```
+
+See the [OpenZeppelin docs](https://docs.openzeppelin.com/upgrades-plugins/writing-upgradeable) for all supported annotations.
 
 ## Configuration
 
@@ -97,14 +150,6 @@ Create `.github/deploy-networks.json` in your repository:
       "chain_id": 11155111,
       "blockscout_url": "https://eth-sepolia.blockscout.com",
       "environment": "testnet"
-    }
-  ],
-  "mainnets": [
-    {
-      "name": "ethereum",
-      "chain_id": 1,
-      "blockscout_url": "https://eth.blockscout.com",
-      "environment": "production-ethereum"
     }
   ]
 }
@@ -122,7 +167,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 |--------|---------|-------------|
 | `PRIVATE_KEY` | Deploy workflows | Deployer wallet private key |
 | `RPC_URL` | All workflows | Network RPC endpoint (also used for fork-based tests) |
-| `GH_TOKEN` | `_deploy-mainnet.yml` | GitHub token for pushing snapshot commits |
+| `DEPLOY_ENV_VARS` | Deploy workflows | Optional; newline-separated `KEY=VALUE` pairs exported as environment variables before running the deploy script |
 
 ## Workflow Inputs
 
@@ -143,7 +188,6 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `coverage-post-comment` | boolean | `true` | Post coverage summary as a sticky PR comment |
 | `coverage-min-threshold` | number | `0` | Minimum coverage % to pass (0 = disabled) |
 | `run-halmos` | boolean | `false` | Run Halmos symbolic execution |
-| `run-commitlint` | boolean | `false` | Enforce conventional commit messages |
 
 | Secret | Required | Description |
 |--------|----------|-------------|
@@ -155,11 +199,10 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
-| `baseline-path` | string | `'test/upgrades/baseline'` | Path to baseline contracts |
-| `fallback-path` | string | `'test/upgrades/previous'` | Fallback path if baseline missing |
-| `validation-script` | string | `'script/upgrades/ValidateUpgrade.s.sol'` | Validation script path |
 | `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
 | `node-version` | string | `'20'` | Node.js version for package installation |
+| `upgrades-config` | string | `'.github/upgrades.json'` | Path to upgrade safety config |
+| `base-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 
 ### `_deploy-testnet.yml`
 
@@ -173,20 +216,6 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
 | `node-version` | string | `'20'` | Node.js version for package installation |
 
-### `_deploy-mainnet.yml`
-
-| Input | Type | Default | Description |
-|-------|------|---------|-------------|
-| `deploy-script` | string | `'script/Deploy.s.sol:Deploy'` | Deployment script |
-| `network-config-path` | string | `'.github/deploy-networks.json'` | Network config path |
-| `network` | string | `''` | Specific network (empty = all) |
-| `indexing-wait` | number | `60` | Seconds to wait before verification |
-| `verify-contracts` | boolean | `true` | Verify on Blockscout |
-| `flatten-contracts` | boolean | `true` | Flatten and commit snapshots |
-| `upgrades-path` | string | `'test/upgrades'` | Path for flattened snapshots |
-| `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
-| `node-version` | string | `'20'` | Node.js version for package installation |
-
 ### `_foundry-cicd.yml`
 
 The all-in-one workflow accepts all inputs from the above workflows plus:
@@ -195,10 +224,5 @@ The all-in-one workflow accepts all inputs from the above workflows plus:
 |-------|------|---------|-------------|
 | `skip-if-no-changes` | boolean | `true` | Skip if no contract files changed |
 | `contract-paths` | string | `src/**`, `script/**`, etc. | Paths to watch for changes |
-| `main-branch` | string | `'main'` | Branch that triggers mainnet deployment |
+| `main-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 | `deploy-on-pr` | boolean | `false` | Deploy to testnet on PR |
-| `deploy-on-main` | boolean | `false` | Deploy to mainnet on push |
-
-## Example Project
-
-See the [examples/foundry-counter](examples/foundry-counter) submodule for a complete working example.

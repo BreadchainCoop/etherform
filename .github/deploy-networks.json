@@ -6,13 +6,5 @@
       "blockscout_url": "https://eth-sepolia.blockscout.com",
       "environment": "testnet"
     }
-  ],
-  "mainnets": [
-    {
-      "name": "ethereum",
-      "chain_id": 1,
-      "blockscout_url": "https://eth.blockscout.com",
-      "environment": "production-ethereum"
-    }
   ]
 }
