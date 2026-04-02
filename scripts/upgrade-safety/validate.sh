@@ -14,7 +14,6 @@ set -euo pipefail
 : "${BASE_BRANCH:?BASE_BRANCH is required}"
 : "${PACKAGE_MANAGER:?PACKAGE_MANAGER is required}"
 CURRENT_BUILD="${CURRENT_BUILD:-out/build-info}"
-ALLOW_FALLBACK="${ALLOW_FALLBACK:-false}"
 OZ_UPGRADES_CORE_VERSION="${OZ_UPGRADES_CORE_VERSION:-1.44.2}"
 
 # Check if config exists
@@ -39,64 +38,9 @@ if ! jq -e 'has("contracts")' "$UPGRADES_CONFIG" > /dev/null 2>&1; then
   exit 1
 fi
 
-# Check for empty contracts array — fail if base branch has entries (prevents bypass via emptying the config)
+# Check for empty contracts array
 CONTRACT_COUNT=$(jq '.contracts | length' "$UPGRADES_CONFIG")
 if [[ "$CONTRACT_COUNT" -eq 0 ]]; then
-  # Ensure we can access the base branch; fail hard unless ALLOW_FALLBACK=true
-  if ! git fetch origin "$BASE_BRANCH" 2>/dev/null; then
-    if [[ "$ALLOW_FALLBACK" != "true" ]]; then
-      echo "::error::Failed to fetch base branch $BASE_BRANCH — cannot safely validate empty contracts configuration"
-      {
-        echo "## Upgrade Safety Validation"
-        echo ""
-        echo "> **Error:** Failed to fetch base branch \`$BASE_BRANCH\`. Cannot determine previous contracts to validate an empty \`$UPGRADES_CONFIG\`."
-      } >> "$GITHUB_STEP_SUMMARY"
-      exit 1
-    else
-      echo "::warning::Failed to fetch base branch $BASE_BRANCH — proceeding with fallback because ALLOW_FALLBACK=true"
-    fi
-  fi
-
-  BASE_CONTRACT_COUNT=0
-  if git show "origin/${BASE_BRANCH}:${UPGRADES_CONFIG}" > /dev/null 2>&1; then
-    if ! BASE_CONTRACT_COUNT=$(git show "origin/${BASE_BRANCH}:${UPGRADES_CONFIG}" | jq '.contracts | length' 2>/dev/null); then
-      if [[ "$ALLOW_FALLBACK" != "true" ]]; then
-        echo "::error::Failed to parse contracts from $UPGRADES_CONFIG on base branch $BASE_BRANCH"
-        {
-          echo "## Upgrade Safety Validation"
-          echo ""
-          echo "> **Error:** Could not parse contracts from \`$UPGRADES_CONFIG\` on base branch \`$BASE_BRANCH\`. Cannot safely validate an empty config."
-        } >> "$GITHUB_STEP_SUMMARY"
-        exit 1
-      else
-        echo "::warning::Failed to parse contracts from $UPGRADES_CONFIG on base branch $BASE_BRANCH — proceeding with fallback because ALLOW_FALLBACK=true"
-        BASE_CONTRACT_COUNT=0
-      fi
-    fi
-  else
-    if [[ "$ALLOW_FALLBACK" != "true" ]]; then
-      echo "::error::Unable to read $UPGRADES_CONFIG from base branch $BASE_BRANCH — cannot safely validate empty contracts configuration"
-      {
-        echo "## Upgrade Safety Validation"
-        echo ""
-        echo "> **Error:** Could not read \`$UPGRADES_CONFIG\` from base branch \`$BASE_BRANCH\`. Cannot determine previous contracts to validate an empty config."
-      } >> "$GITHUB_STEP_SUMMARY"
-      exit 1
-    else
-      echo "::warning::Unable to read $UPGRADES_CONFIG from base branch $BASE_BRANCH — proceeding with fallback because ALLOW_FALLBACK=true"
-    fi
-  fi
-
-  if [[ "$BASE_CONTRACT_COUNT" -gt 0 ]]; then
-    echo "::error::$UPGRADES_CONFIG has 0 contracts but base branch ($BASE_BRANCH) has $BASE_CONTRACT_COUNT — refusing to skip validation"
-    {
-      echo "## Upgrade Safety Validation"
-      echo ""
-      echo "> **Error:** \`$UPGRADES_CONFIG\` has no contracts, but the base branch has $BASE_CONTRACT_COUNT. This looks like an attempt to bypass validation."
-    } >> "$GITHUB_STEP_SUMMARY"
-    exit 1
-  fi
-
   echo "::warning::No contracts defined in $UPGRADES_CONFIG — skipping upgrade safety validation"
   {
     echo "## Upgrade Safety Validation"
@@ -121,7 +65,10 @@ BASE_BUILD=""
 BASE_DIR=""
 if [[ "$NEEDS_BASE" == "true" ]]; then
   echo "Building base branch ($BASE_BRANCH) for comparison..."
-  git fetch origin "$BASE_BRANCH" 2>/dev/null || true
+  if ! git fetch origin "$BASE_BRANCH" 2>/dev/null; then
+    echo "::error::Failed to fetch base branch $BASE_BRANCH — required for contracts without explicit reference"
+    exit 1
+  fi
   BASE_DIR=$(mktemp -d)
 
   if git worktree add --detach "$BASE_DIR" "origin/$BASE_BRANCH" 2>/dev/null; then
@@ -141,20 +88,12 @@ if [[ "$NEEDS_BASE" == "true" ]]; then
       BASE_BUILD="${BASE_DIR}/out/base-build-info"
       echo "Base branch built successfully"
     else
-      if [[ "$ALLOW_FALLBACK" == "true" ]]; then
-        echo "::warning::Failed to build base branch — contracts without explicit reference will be validated for upgradeability only (ALLOW_FALLBACK=true)"
-      else
-        echo "::error::Failed to build base branch. Set ALLOW_FALLBACK=true to downgrade to upgradeability-only validation."
-        exit 1
-      fi
-    fi
-  else
-    if [[ "$ALLOW_FALLBACK" == "true" ]]; then
-      echo "::warning::Could not checkout base branch '$BASE_BRANCH' — contracts without explicit reference will be validated for upgradeability only (ALLOW_FALLBACK=true)"
-    else
-      echo "::error::Could not checkout base branch '$BASE_BRANCH'. Set ALLOW_FALLBACK=true to downgrade to upgradeability-only validation."
+      echo "::error::Failed to build base branch — required for contracts without explicit reference"
       exit 1
     fi
+  else
+    echo "::error::Could not checkout base branch '$BASE_BRANCH' — required for contracts without explicit reference"
+    exit 1
   fi
 fi
 

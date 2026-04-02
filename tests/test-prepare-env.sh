@@ -68,27 +68,26 @@ echo "=== Testing scripts/deploy/prepare-env.sh ==="
   echo "PASS: no PRIVATE_KEY ok"
 ) || { FAILURES=$((FAILURES + 1)); }
 
-# Test 8: Lines without = are skipped
+# Test 8: Lines without = cause failure
 (
   export PRIVATE_KEY="0xtest"
   export DEPLOY_ENV_VARS=$'GOOD=val\nmalformed_no_equals\nALSO_GOOD=123'
-  source "$SCRIPT_DIR/scripts/deploy/prepare-env.sh"
-  [[ "$GOOD" == "val" ]] || { echo "FAIL: GOOD not set"; exit 1; }
-  [[ "$ALSO_GOOD" == "123" ]] || { echo "FAIL: ALSO_GOOD not set"; exit 1; }
-  echo "PASS: lines without = are skipped"
+  if source "$SCRIPT_DIR/scripts/deploy/prepare-env.sh" 2>/dev/null; then
+    echo "FAIL: should have failed on malformed line"
+    exit 1
+  fi
+  echo "PASS: lines without = cause failure"
 ) || { FAILURES=$((FAILURES + 1)); }
 
-# Test 9: Invalid key names are rejected
+# Test 9: Invalid key names cause failure
 (
   export PRIVATE_KEY="0xtest"
-  export DEPLOY_ENV_VARS=$'GOOD_KEY=ok\nbad-key=nope\nbad key=nope'
-  source "$SCRIPT_DIR/scripts/deploy/prepare-env.sh"
-  [[ "$GOOD_KEY" == "ok" ]] || { echo "FAIL: GOOD_KEY not set"; exit 1; }
-  # bad-key and "bad key" should not be set as shell variables
-  [[ -z "${bad_key_marker:-}" ]] || { echo "FAIL: bad-key should not be exported"; exit 1; }
-  # Use declare -p to check — hyphenated names can't be valid bash variables anyway
-  # Just verify GOOD_KEY was the only new export
-  echo "PASS: invalid key names rejected"
+  export DEPLOY_ENV_VARS=$'GOOD_KEY=ok\nbad-key=nope'
+  if source "$SCRIPT_DIR/scripts/deploy/prepare-env.sh" 2>/dev/null; then
+    echo "FAIL: should have failed on invalid key name"
+    exit 1
+  fi
+  echo "PASS: invalid key names cause failure"
 ) || { FAILURES=$((FAILURES + 1)); }
 
 # Test 10: Valid keys with various value formats export correctly

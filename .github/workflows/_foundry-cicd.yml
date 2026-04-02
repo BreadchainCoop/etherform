@@ -78,10 +78,6 @@ on:
         default: 0
 
       # Upgrade Safety Options
-      run-upgrade-safety:
-        description: 'Run upgrade safety validation'
-        type: boolean
-        default: true
       upgrades-config:
         description: 'Path to upgrade safety configuration (upgrades.json)'
         type: string
@@ -391,9 +387,7 @@ jobs:
     name: Upgrade Safety
     runs-on: ubuntu-latest
     needs: [detect-changes, ci]
-    if: |
-      needs.detect-changes.outputs.should-run == 'true' &&
-      inputs.run-upgrade-safety
+    if: needs.detect-changes.outputs.should-run == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -416,7 +410,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager != 'none' && inputs.package-manager || '' }}
+          cache: ${{ inputs.package-manager }}
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
@@ -429,6 +423,12 @@ jobs:
 
       - name: Build contracts
         run: forge build --build-info --extra-output storageLayout
+
+      - name: Validate upgrades config
+        env:
+          UPGRADES_CONFIG: ${{ inputs.upgrades-config }}
+          BASE_BRANCH: ${{ inputs.main-branch }}
+        run: bash .etherform/scripts/upgrade-safety/validate-config.sh
 
       - name: Validate upgrade safety
         env:
