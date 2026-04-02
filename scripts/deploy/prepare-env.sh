@@ -17,7 +17,7 @@ if [[ -n "${DEPLOY_ENV_VARS:-}" ]]; then
     # Expect KEY=VALUE; fail on malformed lines
     if [[ "$line" != *=* ]]; then
       echo "::error::Malformed DEPLOY_ENV_VARS line (no '='): $line"
-      return 1 2>/dev/null || exit 1
+      return 1
     fi
 
     key=${line%%=*}
@@ -26,7 +26,7 @@ if [[ -n "${DEPLOY_ENV_VARS:-}" ]]; then
     # Validate KEY against a safe variable-name pattern
     if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
       echo "::error::Invalid variable name in DEPLOY_ENV_VARS: $key"
-      return 1 2>/dev/null || exit 1
+      return 1
     fi
 
     export "$key=$value"
