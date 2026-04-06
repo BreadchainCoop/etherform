@@ -14,6 +14,7 @@ set -euo pipefail
 : "${BASE_BRANCH:?BASE_BRANCH is required}"
 : "${PACKAGE_MANAGER:?PACKAGE_MANAGER is required}"
 CURRENT_BUILD="${CURRENT_BUILD:-out/build-info}"
+OZ_UPGRADES_CORE_VERSION="${OZ_UPGRADES_CORE_VERSION:-1.44.2}"
 
 # Check if config exists
 if [[ ! -f "$UPGRADES_CONFIG" ]]; then
@@ -64,7 +65,10 @@ BASE_BUILD=""
 BASE_DIR=""
 if [[ "$NEEDS_BASE" == "true" ]]; then
   echo "Building base branch ($BASE_BRANCH) for comparison..."
-  git fetch origin "$BASE_BRANCH" 2>/dev/null || true
+  if ! git fetch origin "$BASE_BRANCH" 2>/dev/null; then
+    echo "::error::Failed to fetch base branch $BASE_BRANCH — required for contracts without explicit reference"
+    exit 1
+  fi
   BASE_DIR=$(mktemp -d)
 
   if git worktree add --detach "$BASE_DIR" "origin/$BASE_BRANCH" 2>/dev/null; then
@@ -84,10 +88,12 @@ if [[ "$NEEDS_BASE" == "true" ]]; then
       BASE_BUILD="${BASE_DIR}/out/base-build-info"
       echo "Base branch built successfully"
     else
-      echo "::warning::Failed to build base branch — contracts without explicit reference will be validated for upgradeability only"
+      echo "::error::Failed to build base branch — required for contracts without explicit reference"
+      exit 1
     fi
   else
-    echo "::warning::Could not checkout base branch '$BASE_BRANCH' — contracts without explicit reference will be validated for upgradeability only"
+    echo "::error::Could not checkout base branch '$BASE_BRANCH' — required for contracts without explicit reference"
+    exit 1
   fi
 fi
 
@@ -107,7 +113,7 @@ while IFS= read -r entry; do
     # === Base branch comparison (default) ===
     if [[ -n "$BASE_BUILD" ]] && git show "origin/${BASE_BRANCH}:${CONTRACT_PATH}" > /dev/null 2>&1; then
       # Contract exists on base branch — compare storage layouts
-      if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
+      if OUTPUT=$(npx @openzeppelin/upgrades-core@"$OZ_UPGRADES_CORE_VERSION" validate "$CURRENT_BUILD" \
           --contract "$CONTRACT" \
           --reference "base-build-info:${CONTRACT}" \
           --referenceBuildInfoDirs "$BASE_BUILD" 2>&1); then
@@ -122,7 +128,7 @@ while IFS= read -r entry; do
     else
       # Contract doesn't exist on base branch or base build failed — validate upgradeability only
       echo "Contract not found on $BASE_BRANCH or base build unavailable, validating upgradeability only..."
-      if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
+      if OUTPUT=$(npx @openzeppelin/upgrades-core@"$OZ_UPGRADES_CORE_VERSION" validate "$CURRENT_BUILD" \
           --contract "$CONTRACT" 2>&1); then
         echo "$OUTPUT"
         SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (new contract) | Pass |"$'\n'
@@ -137,7 +143,7 @@ while IFS= read -r entry; do
   elif echo "$REF_VALUE" | jq -e 'type == "string"' > /dev/null 2>&1; then
     # === Contract qualifier reference ===
     QUALIFIER=$(echo "$entry" | jq -r '.reference')
-    if OUTPUT=$(npx @openzeppelin/upgrades-core validate "$CURRENT_BUILD" \
+    if OUTPUT=$(npx @openzeppelin/upgrades-core@"$OZ_UPGRADES_CORE_VERSION" validate "$CURRENT_BUILD" \
         --contract "$CONTRACT" \
         --reference "$QUALIFIER" 2>&1); then
       echo "$OUTPUT"

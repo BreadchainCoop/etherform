@@ -52,16 +52,10 @@ jobs:
           path: .etherform
           sparse-checkout: scripts
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Setup Node.js
-        if: inputs.package-manager != 'none'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
@@ -78,6 +72,12 @@ jobs:
 
       - name: Build contracts
         run: forge build --build-info --extra-output storageLayout
+
+      - name: Validate upgrades config
+        env:
+          UPGRADES_CONFIG: ${{ inputs.upgrades-config }}
+          BASE_BRANCH: ${{ inputs.base-branch }}
+        run: bash .etherform/scripts/upgrade-safety/validate-config.sh
 
       - name: Validate upgrade safety
         env:
