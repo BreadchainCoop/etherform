@@ -59,7 +59,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager != 'none' && inputs.package-manager || '' }}
+          cache: ${{ inputs.package-manager }}
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
@@ -72,6 +72,12 @@ jobs:
 
       - name: Build contracts
         run: forge build --build-info --extra-output storageLayout
+
+      - name: Validate upgrades config
+        env:
+          UPGRADES_CONFIG: ${{ inputs.upgrades-config }}
+          BASE_BRANCH: ${{ inputs.base-branch }}
+        run: bash .etherform/scripts/upgrade-safety/validate-config.sh
 
       - name: Validate upgrade safety
         env:
