@@ -1,0 +1,22 @@
+{
+  "transactions": [
+    {
+      "hash": "0xabc123",
+      "transactionType": "CREATE",
+      "contractName": "MyToken",
+      "contractAddress": "0x1234567890abcdef1234567890abcdef12345678"
+    },
+    {
+      "hash": "0xdef456",
+      "transactionType": "CREATE",
+      "contractName": "MyProxy",
+      "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    },
+    {
+      "hash": "0x789012",
+      "transactionType": "CALL",
+      "contractName": "MyProxy",
+      "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    }
+  ]
+}

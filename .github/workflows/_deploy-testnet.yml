@@ -1,5 +1,5 @@
 # Reusable testnet deployment workflow
-# Usage: jobs.<job>.uses: ./.github/workflows/_deploy-testnet.yml
+# Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_deploy-testnet.yml@main
 name: Deploy Testnet (Reusable)
 
 on:
@@ -33,6 +33,10 @@ on:
         description: 'Node.js version for package installation'
         type: string
         default: '20'
+      etherform-ref:
+        description: 'Git ref for etherform scripts checkout (default: main)'
+        type: string
+        default: 'main'
     secrets:
       PRIVATE_KEY:
         required: true
@@ -54,6 +58,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Checkout etherform scripts
+        uses: actions/checkout@v4
+        with:
+          repository: BreadchainCoop/etherform
+          ref: ${{ inputs.etherform-ref }}
+          path: .etherform
+          sparse-checkout: scripts
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -88,19 +100,7 @@ jobs:
           RPC_URL: ${{ secrets.RPC_URL }}
           DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
         run: |
-          # Ensure PRIVATE_KEY has 0x prefix
-          if [[ "$PRIVATE_KEY" != 0x* ]]; then
-            export PRIVATE_KEY="0x$PRIVATE_KEY"
-          fi
-
-          # Export user-provided environment variables
-          if [[ -n "$DEPLOY_ENV_VARS" ]]; then
-            while IFS= read -r line; do
-              [[ -z "$line" || "$line" == \#* ]] && continue
-              export "$line"
-            done <<< "$DEPLOY_ENV_VARS"
-          fi
-
+          source .etherform/scripts/deploy/prepare-env.sh
           forge script ${{ inputs.deploy-script }} \
             --rpc-url "$RPC_URL" \
             --broadcast \
@@ -112,24 +112,12 @@ jobs:
 
       - name: Parse deployment addresses
         id: parse
-        run: |
-          # Find the latest broadcast file
-          BROADCAST_FILE=$(find broadcast -name "run-latest.json" -type f | head -1)
-          if [[ -z "$BROADCAST_FILE" ]]; then
-            echo "No broadcast file found"
-            exit 1
-          fi
-          echo "broadcast_file=$BROADCAST_FILE" >> $GITHUB_OUTPUT
-
-          # Extract deployed contract addresses
-          jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
+        run: bash .etherform/scripts/deploy/parse-broadcast.sh
 
       - name: Save deployment artifacts
         run: |
           mkdir -p deployments/${{ steps.network.outputs.network_name }}
           BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-
-          # Extract contracts with proper sourcePathAndName format
           jq '{contracts: [.transactions[] | select(.transactionType == "CREATE") | {sourcePathAndName: "src/\(.contractName).sol:\(.contractName)", address: .contractAddress}]}' "$BROADCAST_FILE" \
             > deployments/${{ steps.network.outputs.network_name }}/deployment.json
 
@@ -142,79 +130,13 @@ jobs:
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-          ETH_RPC_URL: ${{ secrets.RPC_URL }}
-        run: |
-          echo "## Testnet Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Contract | Address | Explorer |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|----------|" >> $GITHUB_STEP_SUMMARY
-
-          while read -r line; do
-            CONTRACT=$(echo "$line" | cut -d: -f1)
-            ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-            echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |" >> $GITHUB_STEP_SUMMARY
-          done < deployment-summary.txt
+          SUMMARY_TITLE: Testnet Deployment Summary
+        run: bash .etherform/scripts/deploy/deployment-summary.sh
 
       - name: Verify contracts on Blockscout
         if: inputs.verify-contracts
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
-        run: |
-          # Validate Blockscout URL format (fail fast on bad URL)
-          if [[ -z "$BLOCKSCOUT_URL" || "$BLOCKSCOUT_URL" == "null" ]]; then
-            echo "::error::BLOCKSCOUT_URL is empty or not configured. Check deploy-networks.json."
-            exit 1
-          fi
-          if [[ ! "$BLOCKSCOUT_URL" =~ ^https?:// ]]; then
-            echo "::error::BLOCKSCOUT_URL has invalid format (got: '$BLOCKSCOUT_URL'). Must start with http:// or https://."
-            exit 1
-          fi
-
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          VERIFY_FAILED=0
-
-          # Use process substitution (not pipe) so variables propagate to this shell
-          while read -r tx; do
-            CONTRACT_NAME=$(echo "$tx" | jq -r '.contractName')
-            CONTRACT_ADDR=$(echo "$tx" | jq -r '.contractAddress')
-
-            echo "Verifying $CONTRACT_NAME at $CONTRACT_ADDR..."
-            VERIFIED=0
-
-            for attempt in 1 2 3; do
-              # Capture output to check for actual success (exit code alone is unreliable)
-              # Use timeout to prevent hanging on unreachable URLs
-              VERIFY_OUTPUT=$(timeout 120 forge verify-contract "$CONTRACT_ADDR" "$CONTRACT_NAME" \
-                --verifier blockscout \
-                --verifier-url "${BLOCKSCOUT_URL}/api" \
-                --guess-constructor-args \
-                --watch 2>&1) || true
-              echo "$VERIFY_OUTPUT"
-
-              if echo "$VERIFY_OUTPUT" | grep -qi "Contract successfully verified\|Pass - Verified"; then
-                echo "✓ Verified $CONTRACT_NAME"
-                VERIFIED=1
-                break
-              elif echo "$VERIFY_OUTPUT" | grep -qi "Already Verified"; then
-                echo "✓ $CONTRACT_NAME already verified"
-                VERIFIED=1
-                break
-              else
-                if [[ $attempt -lt 3 ]]; then
-                  echo "Attempt $attempt failed, retrying in $((attempt * 30))s..."
-                  sleep $((attempt * 30))
-                fi
-              fi
-            done
-
-            if [[ $VERIFIED -eq 0 ]]; then
-              echo "::error::Verification failed for $CONTRACT_NAME after 3 attempts"
-              VERIFY_FAILED=1
-            fi
-          done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
-
-          if [[ $VERIFY_FAILED -eq 1 ]]; then
-            echo "::error::One or more contracts failed verification"
-            exit 1
-          fi
+          BROADCAST_FILE: ${{ steps.parse.outputs.broadcast_file }}
+        run: bash .etherform/scripts/deploy/verify-blockscout.sh
