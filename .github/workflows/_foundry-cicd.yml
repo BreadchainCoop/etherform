@@ -407,6 +407,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Setup Node.js
+        if: inputs.package-manager != 'none'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
