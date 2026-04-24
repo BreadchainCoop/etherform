@@ -516,6 +516,29 @@ jobs:
           SUMMARY_TITLE: Testnet Deployment Summary
         run: bash .etherform/scripts/deploy/deployment-summary.sh
 
+      - name: Write deployment comment
+        if: github.event_name == 'pull_request'
+        env:
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+        run: |
+          {
+            echo "## Testnet Deployment"
+            echo ""
+            echo "| Contract | Address | Explorer |"
+            echo "|----------|---------|----------|"
+            while read -r line; do
+              CONTRACT=$(echo "$line" | cut -d: -f1)
+              ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
+              echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |"
+            done < deployment-summary.txt
+          } > deployment-comment.md
+
+      - name: Post deployment comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: deployment-comment.md
+
       - name: Verify contracts on Blockscout
         if: inputs.verify-contracts
         env:
