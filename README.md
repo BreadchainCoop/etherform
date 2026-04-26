@@ -9,6 +9,7 @@ Reusable GitHub Actions workflows for Foundry smart contract CI/CD with upgrade 
 | `_ci.yml` | Build, test, format check, coverage, and Halmos |
 | `_upgrade-safety.yml` | OpenZeppelin upgrade safety validation |
 | `_deploy-testnet.yml` | Testnet deployment with Blockscout verification |
+| `_release-testnet.yml` | Redeploy on PR merge and publish a GitHub Release |
 | `_foundry-cicd.yml` | All-in-one orchestrator combining all of the above |
 
 ## Usage
@@ -219,6 +220,60 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `node-version` | string | `'20'` | Node.js version for package installation |
 | `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
 
+### `_release-testnet.yml`
+
+Triggered by a consumer-side wrapper on PR merge. Redeploys the merge commit to testnet and publishes a GitHub Release containing the deployed contract names and addresses with Blockscout links.
+
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `deploy-script` | string | `'script/Deploy.s.sol:Deploy'` | Deployment script |
+| `network-config-path` | string | `'.github/deploy-networks.json'` | Network config path |
+| `indexing-wait` | number | `60` | Seconds to wait before verification |
+| `verify-contracts` | boolean | `true` | Verify on Blockscout |
+| `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
+| `node-version` | string | `'20'` | Node.js version for package installation |
+| `tag-prefix` | string | `'testnet-pr-'` | Prefix for the release tag; PR number is appended |
+| `release-on-collision` | string | `'replace'` | Behavior if the tag exists (`replace`, `skip`, `fail`) |
+| `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `PRIVATE_KEY` | Yes | Deployer wallet private key |
+| `RPC_URL` | Yes | Testnet RPC endpoint |
+| `DEPLOY_ENV_VARS` | No | Newline-separated `KEY=VALUE` pairs exported before the deploy script |
+| `GH_TOKEN` | No | Override for the token used to create the release; defaults to `GITHUB_TOKEN` |
+
+#### Consumer wrapper
+
+```yaml
+# .github/workflows/release-testnet.yml in the consumer repo
+name: Release Testnet
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    permissions:
+      contents: write
+    uses: BreadchainCoop/etherform/.github/workflows/_release-testnet.yml@main
+    with:
+      deploy-script: script/Deploy.s.sol:Deploy
+      # release-on-collision: replace   # default
+    secrets:
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+      RPC_URL: ${{ secrets.RPC_URL }}
+```
+
+#### Behavior
+
+- The merge commit (`pull_request.merge_commit_sha`) is deployed to testnet again — this is a fresh deploy, separate from any PR-time validation deploy. Testnet gas is the tradeoff for not having to find and reuse the PR's earlier artifact.
+- The release is tagged `testnet-pr-<number>` (override via `tag-prefix`) and targets the merge commit.
+- If the tag already exists (e.g. PR was reverted then re-merged), default behavior is to delete and recreate. Switch to `skip` to keep the original release, or `fail` to error out.
+- Releases are **not** marked as pre-releases — testnet and mainnet are parallel deployment targets, not pre/release stages. The release title and a banner in the body identify the deployment as testnet.
+- If the deploy fails (e.g. RPC outage, nonce conflict), no release is created. Re-run the workflow to retry.
+
 ### `_foundry-cicd.yml`
 
 The all-in-one workflow accepts all inputs from the above workflows plus:
@@ -241,5 +296,6 @@ Shared logic is extracted into modular bash scripts under `scripts/`. Workflows 
 | `scripts/deploy/` | `prepare-env.sh`, `parse-broadcast.sh`, `resolve-network.sh`, `deployment-summary.sh`, `verify-blockscout.sh` | Deployment helpers |
 | `scripts/coverage/` | `extract-summary.sh`, `check-threshold.sh` | Coverage reporting |
 | `scripts/upgrade-safety/` | `validate.sh` | Upgrade safety validation |
+| `scripts/release/` | `build-release-body.sh`, `create-release.sh` | Release notes + GitHub Release creation |
 
 Run tests locally: `bash tests/test-*.sh`

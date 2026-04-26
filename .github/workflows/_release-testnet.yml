@@ -1,0 +1,190 @@
+# Reusable testnet deployment + GitHub Release workflow.
+# Triggered by the consumer when a PR is merged: redeploys to testnet from the merge
+# commit, then creates a GitHub Release tagged `<tag-prefix><pr-number>` containing the
+# deployed contract names and addresses.
+#
+# Consumer-side wrapper (in their repo):
+#
+#   on:
+#     pull_request:
+#       types: [closed]
+#   jobs:
+#     release:
+#       if: github.event.pull_request.merged == true
+#       permissions:
+#         contents: write
+#       uses: BreadchainCoop/etherform/.github/workflows/_release-testnet.yml@main
+#       secrets:
+#         PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+#         RPC_URL: ${{ secrets.RPC_URL }}
+name: Release Testnet (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      deploy-script:
+        description: 'Path to deployment script'
+        type: string
+        default: 'script/Deploy.s.sol:Deploy'
+      network-config-path:
+        description: 'Path to network configuration JSON'
+        type: string
+        default: '.github/deploy-networks.json'
+      indexing-wait:
+        description: 'Seconds to wait for indexer before verification'
+        type: number
+        default: 60
+      verify-contracts:
+        description: 'Verify deployed contracts on Blockscout'
+        type: boolean
+        default: true
+      package-manager:
+        description: 'Package manager for Node.js dependencies (none, npm, yarn, pnpm)'
+        type: string
+        default: 'none'
+      node-version:
+        description: 'Node.js version for package installation'
+        type: string
+        default: '20'
+      tag-prefix:
+        description: 'Prefix for the release tag; PR number is appended'
+        type: string
+        default: 'testnet-pr-'
+      release-on-collision:
+        description: 'Behavior if the release tag already exists (replace, skip, fail)'
+        type: string
+        default: 'replace'
+      etherform-ref:
+        description: 'Git ref for etherform scripts checkout (default: main)'
+        type: string
+        default: 'main'
+    secrets:
+      PRIVATE_KEY:
+        required: true
+      RPC_URL:
+        required: true
+      DEPLOY_ENV_VARS:
+        description: 'Newline-separated KEY=VALUE pairs exported before running the deploy script'
+        required: false
+      GH_TOKEN:
+        description: 'Optional override for the GitHub token used to create the release; defaults to GITHUB_TOKEN'
+        required: false
+
+jobs:
+  release-testnet:
+    name: Deploy & Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve merge commit SHA
+        id: sha
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          FALLBACK_SHA: ${{ github.sha }}
+        run: |
+          if [[ -n "$MERGE_SHA" && "$MERGE_SHA" != "null" ]]; then
+            echo "sha=$MERGE_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::merge_commit_sha not available, falling back to github.sha"
+            echo "sha=$FALLBACK_SHA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository at merge commit
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ steps.sha.outputs.sha }}
+
+      - name: Checkout etherform scripts
+        uses: actions/checkout@v4
+        with:
+          repository: BreadchainCoop/etherform
+          ref: ${{ inputs.etherform-ref }}
+          path: .etherform
+          sparse-checkout: scripts
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Setup Node.js
+        if: inputs.package-manager != 'none'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - name: Install dependencies
+        if: inputs.package-manager != 'none'
+        run: |
+          case "${{ inputs.package-manager }}" in
+            npm)  npm ci ;;
+            yarn) yarn --frozen-lockfile ;;
+            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
+          esac
+
+      - name: Deploy contracts
+        env:
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+          DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
+        run: |
+          source .etherform/scripts/deploy/prepare-env.sh
+          forge script ${{ inputs.deploy-script }} \
+            --rpc-url "$RPC_URL" \
+            --broadcast \
+            --slow \
+            -vvvv
+
+      - name: Wait for indexing
+        run: sleep ${{ inputs.indexing-wait }}
+
+      - name: Parse deployment addresses
+        id: parse
+        run: bash .etherform/scripts/deploy/parse-broadcast.sh
+
+      - name: Resolve Blockscout URL from chain ID
+        id: network
+        env:
+          CHAIN_ID: ${{ steps.parse.outputs.chain_id }}
+          NETWORK_CONFIG: ${{ inputs.network-config-path }}
+        run: bash .etherform/scripts/deploy/resolve-network.sh
+
+      - name: Create deployment summary
+        env:
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          SUMMARY_TITLE: Testnet Deployment Summary
+        run: bash .etherform/scripts/deploy/deployment-summary.sh
+
+      - name: Verify contracts on Blockscout
+        if: inputs.verify-contracts
+        env:
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          ETH_RPC_URL: ${{ secrets.RPC_URL }}
+          BROADCAST_FILE: ${{ steps.parse.outputs.broadcast_file }}
+        run: bash .etherform/scripts/deploy/verify-blockscout.sh
+
+      - name: Build release body
+        env:
+          BROADCAST_FILE: ${{ steps.parse.outputs.broadcast_file }}
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          NETWORK_NAME: ${{ steps.network.outputs.network_name }}
+          CHAIN_ID: ${{ steps.parse.outputs.chain_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          MERGE_SHA: ${{ steps.sha.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OUTPUT_FILE: release-body.md
+        run: bash .etherform/scripts/release/build-release-body.sh
+
+      - name: Create GitHub release
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag-prefix }}${{ github.event.pull_request.number }}
+          TITLE: "Testnet — ${{ steps.network.outputs.network_name }} — PR #${{ github.event.pull_request.number }}"
+          BODY_FILE: release-body.md
+          TARGET_SHA: ${{ steps.sha.outputs.sha }}
+          COLLISION_POLICY: ${{ inputs.release-on-collision }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || github.token }}
+        run: bash .etherform/scripts/release/create-release.sh

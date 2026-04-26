@@ -40,3 +40,9 @@ jobs:
 
       - name: Test check-threshold
         run: bash tests/test-check-threshold.sh
+
+      - name: Test build-release-body
+        run: bash tests/test-build-release-body.sh
+
+      - name: Test create-release
+        run: bash tests/test-create-release.sh
