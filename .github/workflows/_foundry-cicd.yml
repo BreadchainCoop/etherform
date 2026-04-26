@@ -441,6 +441,9 @@ jobs:
   deploy-testnet:
     name: Deploy Testnet
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     needs: [detect-changes, ci, upgrade-safety]
     if: |
       always() &&
@@ -520,23 +523,14 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-        run: |
-          {
-            echo "## Testnet Deployment"
-            echo ""
-            echo "| Contract | Address | Explorer |"
-            echo "|----------|---------|----------|"
-            while read -r line; do
-              CONTRACT=$(echo "$line" | cut -d: -f1)
-              ADDRESS=$(echo "$line" | cut -d: -f2 | tr -d ' ')
-              echo "| $CONTRACT | \`$ADDRESS\` | [View](${BLOCKSCOUT_URL}/address/$ADDRESS) |"
-            done < deployment-summary.txt
-          } > deployment-comment.md
+          NETWORK_NAME: ${{ steps.network.outputs.network_name }}
+        run: bash .etherform/scripts/deploy/deployment-comment.sh
 
       - name: Post deployment comment
         if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
+          header: testnet-deployment-${{ steps.network.outputs.network_name }}
           path: deployment-comment.md
 
       - name: Verify contracts on Blockscout

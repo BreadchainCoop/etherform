@@ -35,6 +35,9 @@ jobs:
       - name: Test deployment-summary
         run: bash tests/test-deployment-summary.sh
 
+      - name: Test deployment-comment
+        run: bash tests/test-deployment-comment.sh
+
       - name: Test extract-summary
         run: bash tests/test-extract-summary.sh
 
