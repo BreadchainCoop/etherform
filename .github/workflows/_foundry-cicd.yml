@@ -108,6 +108,10 @@ on:
         description: 'Verify deployed contracts on Blockscout'
         type: boolean
         default: true
+      deploy-environment:
+        description: 'GitHub Environment to scope the testnet deploy to (e.g. for required reviewers + scoped secrets). Empty disables the gate.'
+        type: string
+        default: 'testnet'
       # Halmos Options
       run-halmos:
         description: 'Run Halmos symbolic execution'
@@ -449,6 +453,7 @@ jobs:
       needs.upgrade-safety.result == 'success' &&
       inputs.deploy-on-pr &&
       github.event_name == 'pull_request'
+    environment: ${{ inputs.deploy-environment }}
     outputs:
       blockscout_url: ${{ steps.network.outputs.blockscout_url }}
       broadcast_file: ${{ steps.parse.outputs.broadcast_file }}

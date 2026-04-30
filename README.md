@@ -184,6 +184,14 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `RPC_URL` | All workflows | Network RPC endpoint (also used for fork-based tests) |
 | `DEPLOY_ENV_VARS` | Deploy workflows | Optional; newline-separated `KEY=VALUE` pairs exported as environment variables before running the deploy script |
 
+### Protecting deploys with a GitHub Environment
+
+The deploy job in `_deploy-testnet.yml` (and the `deploy-testnet` job in `_foundry-cicd.yml`) is scoped to a GitHub Environment via the `environment` / `deploy-environment` input (default: `testnet`).
+
+In the consumer repo, create an Environment matching that name and configure protection rules — typically **required reviewers** and a **deployment branch policy** restricted to `main`. Store `PRIVATE_KEY` (and any deploy-only secrets) on the Environment rather than the repo, so they're only available after a maintainer approves the run.
+
+To opt out (e.g., for an internal sandbox), pass an empty string: `environment: ''`.
+
 ## Workflow Inputs
 
 ### `_ci.yml`
@@ -232,6 +240,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `verify-contracts` | boolean | `true` | Verify on Blockscout |
 | `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
 | `node-version` | string | `'20'` | Node.js version for package installation |
+| `environment` | string | `'testnet'` | GitHub Environment to scope the deploy to. Empty disables the gate. |
 | `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
 
 ### `_foundry-cicd.yml`
@@ -244,6 +253,7 @@ The all-in-one workflow accepts all inputs from the above workflows plus:
 | `contract-paths` | string | `src/**`, `script/**`, etc. | Paths to watch for changes |
 | `main-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 | `deploy-on-pr` | boolean | `false` | Deploy to testnet on PR |
+| `deploy-environment` | string | `'testnet'` | GitHub Environment to scope the deploy to. Empty disables the gate. |
 
 All workflows also accept `etherform-ref` (default: `'main'`) to control which etherform branch the scripts are checked out from. Override this when testing against an unreleased etherform branch.
 
