@@ -104,6 +104,21 @@ Each entry specifies a contract to validate. The `reference` field controls what
 }
 ```
 
+#### Removing entries
+
+By default, removing a contract from `upgrades.json` is a hard error — without this guard, deletions could silently bypass the upgrade-safety check. To intentionally drop entries (e.g. retiring a contract), set the top-level `"dangerous": true` flag in the same PR:
+
+```json
+{
+  "dangerous": true,
+  "contracts": [
+    { "contract": "src/Greeter.sol:Greeter" }
+  ]
+}
+```
+
+Removals will be reported as a warning instead. Reset the flag back to `false` (or drop it) in a follow-up PR.
+
 #### 3. Use the workflow
 
 ```yaml
