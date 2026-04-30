@@ -12,7 +12,7 @@ jobs:
     name: ShellCheck Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Run ShellCheck on all scripts
         run: find scripts/ -name '*.sh' -exec shellcheck -s bash {} +
@@ -21,7 +21,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Test prepare-env
         run: bash tests/test-prepare-env.sh
