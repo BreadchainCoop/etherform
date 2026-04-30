@@ -224,6 +224,8 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 
 Triggered by a consumer-side wrapper on PR merge. Redeploys the merge commit to testnet and publishes a GitHub Release containing the deployed contract names and addresses with Blockscout links.
 
+> **Tip:** if you are already using `_foundry-cicd.yml`, prefer setting `release-on-merge: true` there instead of adding a second wrapper file. See [`_foundry-cicd.yml`](#_foundry-cicdyml) below.
+
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
 | `deploy-script` | string | `'script/Deploy.s.sol:Deploy'` | Deployment script |
@@ -284,8 +286,41 @@ The all-in-one workflow accepts all inputs from the above workflows plus:
 | `contract-paths` | string | `src/**`, `script/**`, etc. | Paths to watch for changes |
 | `main-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 | `deploy-on-pr` | boolean | `false` | Deploy to testnet on PR |
+| `release-on-merge` | boolean | `false` | On PR merge, redeploy and publish a GitHub Release |
+| `tag-prefix` | string | `'testnet-pr-'` | Prefix for the release tag; PR number is appended |
+| `release-on-collision` | string | `'replace'` | Behavior if the release tag exists (`replace`, `skip`, `fail`) |
+
+It also accepts an optional `GH_TOKEN` secret to override the token used for release creation (defaults to `GITHUB_TOKEN`).
 
 All workflows also accept `etherform-ref` (default: `'main'`) to control which etherform branch the scripts are checked out from. Override this when testing against an unreleased etherform branch.
+
+#### Consumer wrapper (CI + release in one file)
+
+To run CI on push/PR and publish a testnet release on merge from a single workflow file, list `closed` in the `pull_request` types and set `release-on-merge: true`:
+
+```yaml
+# .github/workflows/cicd.yml
+name: CI/CD
+on:
+  push:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  cicd:
+    uses: BreadchainCoop/etherform/.github/workflows/_foundry-cicd.yml@main
+    with:
+      release-on-merge: true
+    secrets: inherit
+```
+
+When a `pull_request: closed` event fires:
+
+- If the PR was merged and `release-on-merge: true`, only the `release-testnet` job runs.
+- The CI / upgrade-safety / deploy jobs are skipped (the workflow short-circuits in `detect-changes`).
+- If the PR was closed without merging, no jobs run.
+
+Use the standalone [`_release-testnet.yml`](#_release-testnetyml) instead if you need release in a separate workflow file (e.g. for distinct status checks or tighter permission scoping).
 
 ## Scripts
 
