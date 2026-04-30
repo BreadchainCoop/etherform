@@ -204,6 +204,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `coverage-min-threshold` | number | `0` | Minimum coverage % to pass (0 = disabled) |
 | `run-halmos` | boolean | `false` | Run Halmos symbolic execution |
 | `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
+| `foundry-version` | string | `'stable'` | Foundry release channel or tag (e.g. `stable`, `nightly`, `v1.0.0`) |
 
 | Secret | Required | Description |
 |--------|----------|-------------|
@@ -220,6 +221,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `upgrades-config` | string | `'.github/upgrades.json'` | Path to upgrade safety config |
 | `base-branch` | string | `'main'` | Base branch for upgrade safety comparison |
 | `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
+| `foundry-version` | string | `'stable'` | Foundry release channel or tag |
 
 ### `_deploy-testnet.yml`
 
@@ -233,6 +235,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `package-manager` | string | `'none'` | Package manager (`none`, `npm`, `yarn`, `pnpm`) |
 | `node-version` | string | `'20'` | Node.js version for package installation |
 | `etherform-ref` | string | `'main'` | Git ref for etherform scripts checkout |
+| `foundry-version` | string | `'stable'` | Foundry release channel or tag |
 
 ### `_foundry-cicd.yml`
 
@@ -246,6 +249,8 @@ The all-in-one workflow accepts all inputs from the above workflows plus:
 | `deploy-on-pr` | boolean | `false` | Deploy to testnet on PR |
 
 All workflows also accept `etherform-ref` (default: `'main'`) to control which etherform branch the scripts are checked out from. Override this when testing against an unreleased etherform branch.
+
+All workflows also accept `foundry-version` (default: `'stable'`) which is forwarded to `foundry-rs/foundry-toolchain`. Default behavior tracks the latest stable Foundry release; pass a specific tag like `'v1.0.0'` for fully reproducible builds.
 
 ## Scripts
 

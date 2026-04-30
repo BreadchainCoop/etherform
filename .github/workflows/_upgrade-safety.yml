@@ -33,6 +33,10 @@ on:
         description: 'Git ref for etherform scripts checkout (default: main)'
         type: string
         default: 'main'
+      foundry-version:
+        description: 'Foundry release channel or tag (e.g. stable, nightly, v1.0.0)'
+        type: string
+        default: 'stable'
 jobs:
   upgrade-safety:
     name: Validate Upgrade Safety
@@ -54,6 +58,8 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ inputs.foundry-version }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
