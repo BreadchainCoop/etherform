@@ -11,6 +11,137 @@ Reusable GitHub Actions workflows for Foundry smart contract CI/CD with upgrade 
 | `_deploy-testnet.yml` | Testnet deployment with Blockscout verification |
 | `_foundry-cicd.yml` | All-in-one orchestrator combining all of the above |
 
+## Getting Started
+
+Etherform's job is to make Solidity CI safe by default — including for repos where most contributors don't write Solidity day-to-day. You add **one workflow file** pointing at `_foundry-cicd.yml`, and every PR is checked for the things that catch Solidity-specific bugs (compile errors, broken upgrades, dropped coverage, deploy failures) before review.
+
+This guide walks through the minimum setup and then layers each optional feature.
+
+### What you get
+
+With `_foundry-cicd.yml` (the recommended entry point), every PR is checked for:
+
+- **Compilation and tests** — `forge build` and `forge test` must pass.
+- **Formatting** — `forge fmt --check`, on by default.
+- **Upgrade safety** *(opt-in)* — for contracts behind upgradeable proxies, OpenZeppelin's upgrades-core compares the PR against `main` and fails if the storage layout, initializers, or proxy semantics change in a way that would brick a live upgrade. Storage-layout regressions are the most common way to brick a proxy, and the type checker and tests will not catch them.
+- **Coverage threshold** *(opt-in)* — sticky PR comment with coverage; configurable threshold blocks PRs that drop below it.
+- **Static analysis & symbolic execution** *(opt-in)* — Slither and Halmos.
+- **Testnet deploy on PR** *(opt-in)* — every PR is deployed to a testnet with Blockscout verification, so end-to-end behavior is exercised before merge.
+
+You don't need to understand how any of these tools work to get value from them — defaults are conservative, and Solidity-specific failure modes surface as plain pass/fail PR checks.
+
+### Step 1 — Minimum viable CI
+
+Create `.github/workflows/cicd.yml` in your repo:
+
+```yaml
+name: CI/CD
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  cicd:
+    uses: BreadchainCoop/etherform/.github/workflows/_foundry-cicd.yml@main
+    secrets: inherit
+```
+
+That's it. Push the file and PRs will run `forge build`, `forge test`, and `forge fmt --check`. No secrets or extra config files are needed yet.
+
+`pull-requests: write` is granted up front so the coverage PR comment works once you turn coverage on; it's harmless while coverage is off. `secrets: inherit` lets etherform see any secrets you add later (e.g. `RPC_URL`, `PRIVATE_KEY`) without you having to enumerate them.
+
+### Step 2 — Node-managed Solidity dependencies (e.g. OpenZeppelin)
+
+If your contracts import OpenZeppelin (or anything else) via `node_modules`, tell the workflow which package manager to use:
+
+```yaml
+    with:
+      package-manager: yarn   # or npm, pnpm
+```
+
+The workflow installs Node and runs the corresponding install command before `forge build`.
+
+> **Watch out:** `_foundry-cicd.yml` defaults to `skip-if-no-changes: true`, so dependency-only PRs are skipped unless you also add `package.json` and your lockfile to `contract-paths`. See [Configuration → Node.js Dependencies](#nodejs-dependencies).
+
+### Step 3 — Upgrade safety
+
+Use this if any of your contracts are deployed behind upgradeable proxies. It is the highest-leverage feature in this library: it stops a contributor from merging a change that would brick a live deployment.
+
+**3a.** Enable storage-layout output in `foundry.toml`:
+
+```toml
+build_info = true
+extra_output = ["storageLayout"]
+```
+
+**3b.** List your upgradeable contracts in `.github/upgrades.json`:
+
+```json
+{
+  "contracts": [
+    { "contract": "src/Token.sol:Token" },
+    { "contract": "src/Greeter.sol:Greeter" }
+  ]
+}
+```
+
+Each contract is compared against the version on `main`. `_foundry-cicd.yml` runs the check by default — no additional input needed.
+
+For the rarer "compare a V2 against a V1 kept in the same repo" case, and for guidance on intentionally removing entries, see the [Upgrade Safety](#upgrade-safety) section below.
+
+### Step 4 — Testnet deploy on PR
+
+Deploy every PR to a testnet so end-to-end deployment behavior is validated before merge.
+
+**4a.** List your testnets in `.github/deploy-networks.json`:
+
+```json
+{
+  "testnets": [
+    {
+      "name": "sepolia",
+      "chain_id": 11155111,
+      "blockscout_url": "https://eth-sepolia.blockscout.com",
+      "environment": "testnet"
+    }
+  ]
+}
+```
+
+**4b.** Add repo secrets in **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|--------|-------|
+| `PRIVATE_KEY` | Deployer wallet private key — use a dedicated, low-balance testnet wallet |
+| `RPC_URL` | Testnet RPC endpoint |
+
+**4c.** Turn on the deploy:
+
+```yaml
+    with:
+      deploy-on-pr: true
+```
+
+The deploy job verifies the contracts on Blockscout and posts a deployment summary in the run.
+
+### Step 5 — Coverage threshold and static analysis (optional)
+
+```yaml
+    with:
+      run-coverage: true
+      coverage-min-threshold: 80   # fail if coverage drops below 80%
+      run-slither: true
+      run-halmos: true
+```
+
+### Common pitfalls
+
+- **One workflow file, not several.** `_foundry-cicd.yml` already covers CI, upgrade safety, and deploy. Don't also add separate `_ci.yml` or `_upgrade-safety.yml` wrappers — every PR will run everything twice.
+- **Testing changes to etherform itself.** When you point `uses:` at an etherform branch (e.g. `@my-branch`), you also need to set `etherform-ref: my-branch`. The workflow does a separate sparse checkout of etherform's bash scripts that uses `etherform-ref` (default `main`); without it, your `uses:` change has no effect on the script logic.
+- **`403 Resource not accessible by integration`.** Permissions are granted by the calling workflow, not at the org level. Start with the `permissions:` block in step 1 and grow it if a feature you turn on later requires more.
+
 ## Usage
 
 ### Basic CI
