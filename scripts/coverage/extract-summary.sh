@@ -1,79 +1,84 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Parse forge coverage output into summary percentages and a markdown comment.
+# Parse forge coverage lcov output into summary percentages and a markdown comment.
 #
 # Env inputs:
-#   COVERAGE_SOURCE_FILTER — optional, grep filter for source files (default: ' src/')
-#
-# File inputs:
-#   coverage-raw.txt must exist in the working directory
+#   COVERAGE_SOURCE_PREFIX — optional, path prefix to include (default: 'src/')
+#   COVERAGE_LCOV_FILE     — optional, default 'lcov.info'
 #
 # Outputs (via $GITHUB_OUTPUT):
 #   lines_pct, stmts_pct, branch_pct, funcs_pct
+#   stmts_pct is set equal to lines_pct — lcov has no separate statements metric.
 #
 # Side effects:
-#   Creates coverage-comment.md in the working directory
+#   Creates coverage-comment.md in the working directory.
 
-COVERAGE_SOURCE_FILTER="${COVERAGE_SOURCE_FILTER:- src/}"
+COVERAGE_SOURCE_PREFIX="${COVERAGE_SOURCE_PREFIX:-src/}"
+LCOV_FILE="${COVERAGE_LCOV_FILE:-lcov.info}"
 
-# Extract the final summary table (box-drawing characters)
-awk '/^╭/,/^╰/' coverage-raw.txt > coverage-table.txt
+if [[ ! -f "$LCOV_FILE" ]]; then
+  echo "::error::lcov file not found at $LCOV_FILE"
+  exit 1
+fi
 
-# Filter to only source files and compute totals from raw counts
-grep '^|' coverage-table.txt | grep "$COVERAGE_SOURCE_FILTER" > src-rows.txt || true
+# Parse lcov into a totals file (1 line) and a per-file table.
+awk -v prefix="$COVERAGE_SOURCE_PREFIX" '
+  function reset() { sf=""; lh=0; lf=0; brh=0; brf=0; fnh=0; fnf=0; include=0 }
+  BEGIN { reset(); TLH=TLF=TBRH=TBRF=TFNH=TFNF=0 }
+  /^SF:/  { sf  = substr($0,4); include = (index(sf, prefix) == 1); next }
+  /^LH:/  { lh  = substr($0,4) + 0; next }
+  /^LF:/  { lf  = substr($0,4) + 0; next }
+  /^BRH:/ { brh = substr($0,5) + 0; next }
+  /^BRF:/ { brf = substr($0,5) + 0; next }
+  /^FNH:/ { fnh = substr($0,5) + 0; next }
+  /^FNF:/ { fnf = substr($0,5) + 0; next }
+  /^end_of_record/ {
+    if (include) {
+      printf "%s\t%d\t%d\t%d\t%d\t%d\t%d\n", sf, lh, lf, brh, brf, fnh, fnf > "coverage-files.tsv"
+      TLH+=lh; TLF+=lf; TBRH+=brh; TBRF+=brf; TFNH+=fnh; TFNF+=fnf
+    }
+    reset()
+  }
+  END {
+    printf "%d\t%d\t%d\t%d\t%d\t%d\n", TLH, TLF, TBRH, TBRF, TFNH, TFNF > "coverage-totals.tsv"
+  }
+' "$LCOV_FILE"
 
-# Sum up hit/total for each metric across source files
-total_lines_hit=0; total_lines_all=0
-total_stmts_hit=0; total_stmts_all=0
-total_branch_hit=0; total_branch_all=0
-total_funcs_hit=0; total_funcs_all=0
+[[ -f coverage-files.tsv ]] || : > coverage-files.tsv
 
-while IFS='|' read -r _ file lines stmts branches funcs _; do
-  extract() { echo "$1" | grep -oP '\(\K[0-9]+/[0-9]+' | tr '/' ' '; }
-  read -r lh lt <<< "$(extract "$lines")"
-  read -r sh st <<< "$(extract "$stmts")"
-  read -r bh bt <<< "$(extract "$branches")"
-  read -r fh ft <<< "$(extract "$funcs")"
-  total_lines_hit=$((total_lines_hit + lh)); total_lines_all=$((total_lines_all + lt))
-  total_stmts_hit=$((total_stmts_hit + sh)); total_stmts_all=$((total_stmts_all + st))
-  total_branch_hit=$((total_branch_hit + bh)); total_branch_all=$((total_branch_all + bt))
-  total_funcs_hit=$((total_funcs_hit + fh)); total_funcs_all=$((total_funcs_all + ft))
-done < src-rows.txt
+read -r TLH TLF TBRH TBRF TFNH TFNF < coverage-totals.tsv
 
-pct() { [ "$2" -eq 0 ] && echo "100.00% (0/0)" || printf "%.2f%% (%d/%d)" "$(echo "scale=4; $1 * 100 / $2" | bc)" "$1" "$2"; }
-
-# Compute numeric percentages for threshold checking
 num_pct() { if [ "$2" -eq 0 ]; then echo "100.00"; else echo "scale=2; $1 * 100 / $2" | bc; fi; }
+fmt_pct() { if [ "$2" -eq 0 ]; then echo "100.00% (0/0)"; else printf "%.2f%% (%d/%d)" "$(echo "scale=4; $1 * 100 / $2" | bc)" "$1" "$2"; fi; }
+
+LINES_PCT=$(num_pct "$TLH" "$TLF")
+BRANCH_PCT=$(num_pct "$TBRH" "$TBRF")
+FUNCS_PCT=$(num_pct "$TFNH" "$TFNF")
+
 {
-  echo "lines_pct=$(num_pct $total_lines_hit $total_lines_all)"
-  echo "stmts_pct=$(num_pct $total_stmts_hit $total_stmts_all)"
-  echo "branch_pct=$(num_pct $total_branch_hit $total_branch_all)"
-  echo "funcs_pct=$(num_pct $total_funcs_hit $total_funcs_all)"
+  echo "lines_pct=$LINES_PCT"
+  echo "stmts_pct=$LINES_PCT"
+  echo "branch_pct=$BRANCH_PCT"
+  echo "funcs_pct=$FUNCS_PCT"
 } >> "$GITHUB_OUTPUT"
 
-# Build the markdown comment
 {
   echo "## Coverage Report"
   echo ""
   echo "| Metric | Coverage |"
   echo "|--------|----------|"
-  echo "| Lines | $(pct $total_lines_hit $total_lines_all) |"
-  echo "| Statements | $(pct $total_stmts_hit $total_stmts_all) |"
-  echo "| Branches | $(pct $total_branch_hit $total_branch_all) |"
-  echo "| Functions | $(pct $total_funcs_hit $total_funcs_all) |"
+  echo "| Lines | $(fmt_pct "$TLH" "$TLF") |"
+  echo "| Branches | $(fmt_pct "$TBRH" "$TBRF") |"
+  echo "| Functions | $(fmt_pct "$TFNH" "$TFNF") |"
   echo ""
   echo "<details><summary>Coverage by file</summary>"
   echo ""
-  echo "| File | Lines | Statements | Branches | Functions |"
-  echo "|------|-------|------------|----------|-----------|"
-  while IFS='|' read -r _ file lines stmts branches funcs _; do
-    file=$(echo "$file" | xargs)
-    lines=$(echo "$lines" | xargs)
-    stmts=$(echo "$stmts" | xargs)
-    branches=$(echo "$branches" | xargs)
-    funcs=$(echo "$funcs" | xargs)
-    echo "| \`$file\` | $lines | $stmts | $branches | $funcs |"
-  done < src-rows.txt
+  echo "| File | Lines | Branches | Functions |"
+  echo "|------|-------|----------|-----------|"
+  while IFS=$'\t' read -r sf lh lf brh brf fnh fnf; do
+    [[ -z "$sf" ]] && continue
+    echo "| \`$sf\` | $(fmt_pct "$lh" "$lf") | $(fmt_pct "$brh" "$brf") | $(fmt_pct "$fnh" "$fnf") |"
+  done < coverage-files.tsv
   echo ""
   echo "</details>"
 } > coverage-comment.md

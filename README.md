@@ -199,7 +199,7 @@ If your Foundry project uses npm/yarn/pnpm for Solidity dependencies (e.g., Open
 | `slither-config` | string | `'slither.config.json'` | Path to slither.config.json |
 | `run-coverage` | boolean | `false` | Run `forge coverage` and post PR comment |
 | `coverage-exclude-paths` | string | `''` | Path pattern to exclude from coverage (`--no-match-path`) |
-| `coverage-source-filter` | string | `' src/'` | Grep filter for source files in coverage report |
+| `coverage-source-prefix` | string | `'src/'` | Path prefix for source files included in the lcov-based coverage summary |
 | `coverage-post-comment` | boolean | `true` | Post coverage summary as a sticky PR comment |
 | `coverage-min-threshold` | number | `0` | Minimum coverage % to pass (0 = disabled) |
 | `run-halmos` | boolean | `false` | Run Halmos symbolic execution |
