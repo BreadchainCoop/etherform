@@ -23,7 +23,7 @@ echo "=== Testing scripts/deploy/parse-broadcast.sh ==="
   echo "PASS: extracts broadcast_file and chain_id"
 ) || { FAILURES=$((FAILURES + 1)); }
 
-# Test 2: Creates deployment-summary.txt with CREATE transactions only
+# Test 2: Logs CREATE entries to stdout
 (
   TMPDIR=$(mktemp -d)
   trap 'rm -rf "$TMPDIR"' EXIT
@@ -33,13 +33,12 @@ echo "=== Testing scripts/deploy/parse-broadcast.sh ==="
   export GITHUB_OUTPUT="$TMPDIR/github-output.txt"
   touch "$GITHUB_OUTPUT"
 
-  bash "$SCRIPT_DIR/scripts/deploy/parse-broadcast.sh" > /dev/null
+  OUTPUT=$(bash "$SCRIPT_DIR/scripts/deploy/parse-broadcast.sh")
 
-  [[ $(wc -l < deployment-summary.txt) -eq 2 ]] || { echo "FAIL: expected 2 lines, got $(wc -l < deployment-summary.txt)"; exit 1; }
-  grep -q "MyToken" deployment-summary.txt || { echo "FAIL: MyToken not found"; exit 1; }
-  grep -q "MyProxy" deployment-summary.txt || { echo "FAIL: MyProxy not found"; exit 1; }
+  echo "$OUTPUT" | grep -q "MyToken" || { echo "FAIL: MyToken not logged"; exit 1; }
+  echo "$OUTPUT" | grep -q "MyProxy" || { echo "FAIL: MyProxy not logged"; exit 1; }
 
-  echo "PASS: deployment-summary.txt has correct CREATE entries"
+  echo "PASS: logs CREATE entries"
 ) || { FAILURES=$((FAILURES + 1)); }
 
 # Test 3: Fails when no broadcast file exists

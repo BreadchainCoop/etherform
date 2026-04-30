@@ -4,19 +4,25 @@
       "hash": "0xabc123",
       "transactionType": "CREATE",
       "contractName": "MyToken",
-      "contractAddress": "0x1234567890abcdef1234567890abcdef12345678"
+      "contractAddress": "0x1234567890abcdef1234567890abcdef12345678",
+      "function": null,
+      "arguments": ["0xAdminAdminAdminAdminAdminAdminAdminAdmin0001"]
     },
     {
       "hash": "0xdef456",
       "transactionType": "CREATE",
       "contractName": "MyProxy",
-      "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+      "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      "function": null,
+      "arguments": null
     },
     {
       "hash": "0x789012",
       "transactionType": "CALL",
       "contractName": "MyProxy",
-      "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+      "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      "function": "initialize(address,uint256)",
+      "arguments": ["0x1234567890abcdef1234567890abcdef12345678", "1000000000000000000"]
     }
   ]
 }

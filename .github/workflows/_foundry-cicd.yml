@@ -522,6 +522,7 @@ jobs:
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          BROADCAST_FILE: ${{ steps.parse.outputs.broadcast_file }}
           SUMMARY_TITLE: Testnet Deployment Summary
         run: bash .etherform/scripts/deploy/deployment-summary.sh
 
