@@ -88,8 +88,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -108,7 +110,8 @@ jobs:
       - name: Run tests
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
-        run: forge test -${{ inputs.test-verbosity }}
+          TEST_VERBOSITY: ${{ inputs.test-verbosity }}
+        run: forge test "-$TEST_VERBOSITY"
 
   slither:
     name: Slither Analysis
@@ -132,8 +135,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -179,8 +184,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -192,9 +199,10 @@ jobs:
       - name: Run coverage
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
+          COVERAGE_EXCLUDE_PATHS: ${{ inputs.coverage-exclude-paths }}
         run: |
-          if [[ -n "${{ inputs.coverage-exclude-paths }}" ]]; then
-            forge coverage --no-match-path "${{ inputs.coverage-exclude-paths }}" 2>&1 | tee coverage-raw.txt
+          if [[ -n "$COVERAGE_EXCLUDE_PATHS" ]]; then
+            forge coverage --no-match-path "$COVERAGE_EXCLUDE_PATHS" 2>&1 | tee coverage-raw.txt
           else
             forge coverage 2>&1 | tee coverage-raw.txt
           fi
@@ -243,8 +251,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;

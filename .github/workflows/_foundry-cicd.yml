@@ -146,13 +146,17 @@ jobs:
 
       - name: Build paths filter
         id: paths
+        env:
+          CONTRACT_PATHS: ${{ inputs.contract-paths }}
         run: |
           # Convert newline-separated paths to YAML list format
-          YAML_PATHS=$(echo "${{ inputs.contract-paths }}" | sed '/^$/d' | sed 's/^/    - /')
-          echo "filter<<EOF" >> $GITHUB_OUTPUT
-          echo "contracts:" >> $GITHUB_OUTPUT
-          echo "$YAML_PATHS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          YAML_PATHS=$(echo "$CONTRACT_PATHS" | sed '/^$/d' | sed 's/^/    - /')
+          {
+            echo "filter<<EOF"
+            echo "contracts:"
+            echo "$YAML_PATHS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Check for contract changes
         id: filter
@@ -162,16 +166,19 @@ jobs:
 
       - name: Decide whether to run
         id: decide
+        env:
+          SKIP_IF_NO_CHANGES: ${{ inputs.skip-if-no-changes }}
+          CONTRACTS_CHANGED: ${{ steps.filter.outputs.contracts }}
         run: |
-          if [[ "${{ inputs.skip-if-no-changes }}" == "false" ]]; then
+          if [[ "$SKIP_IF_NO_CHANGES" == "false" ]]; then
             echo "Change detection disabled, workflow will run"
-            echo "should-run=true" >> $GITHUB_OUTPUT
-          elif [[ "${{ steps.filter.outputs.contracts }}" == "true" ]]; then
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$CONTRACTS_CHANGED" == "true" ]]; then
             echo "Contract changes detected, workflow will run"
-            echo "should-run=true" >> $GITHUB_OUTPUT
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
           else
             echo "No contract changes detected, skipping workflow"
-            echo "should-run=false" >> $GITHUB_OUTPUT
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
           fi
 
   ci:
@@ -197,8 +204,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -217,7 +226,8 @@ jobs:
       - name: Run tests
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
-        run: forge test -${{ inputs.test-verbosity }}
+          TEST_VERBOSITY: ${{ inputs.test-verbosity }}
+        run: forge test "-$TEST_VERBOSITY"
 
   slither:
     name: Slither Analysis
@@ -244,8 +254,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -295,8 +307,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -308,9 +322,10 @@ jobs:
       - name: Run coverage
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
+          COVERAGE_EXCLUDE_PATHS: ${{ inputs.coverage-exclude-paths }}
         run: |
-          if [[ -n "${{ inputs.coverage-exclude-paths }}" ]]; then
-            forge coverage --no-match-path "${{ inputs.coverage-exclude-paths }}" 2>&1 | tee coverage-raw.txt
+          if [[ -n "$COVERAGE_EXCLUDE_PATHS" ]]; then
+            forge coverage --no-match-path "$COVERAGE_EXCLUDE_PATHS" 2>&1 | tee coverage-raw.txt
           else
             forge coverage 2>&1 | tee coverage-raw.txt
           fi
@@ -362,8 +377,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -415,8 +432,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -478,8 +497,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
@@ -490,9 +511,10 @@ jobs:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
           DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
+          DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
         run: |
           source .etherform/scripts/deploy/prepare-env.sh
-          forge script "${{ inputs.deploy-script }}" \
+          forge script "$DEPLOY_SCRIPT" \
             --rpc-url "$RPC_URL" \
             --private-key "$PRIVATE_KEY" \
             --broadcast \
@@ -500,7 +522,9 @@ jobs:
             -vvvv
 
       - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
+        env:
+          INDEXING_WAIT: ${{ inputs.indexing-wait }}
+        run: sleep "$INDEXING_WAIT"
 
       - name: Parse deployment addresses
         id: parse

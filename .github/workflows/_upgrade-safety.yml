@@ -63,8 +63,10 @@ jobs:
 
       - name: Install dependencies
         if: inputs.package-manager != 'none'
+        env:
+          PACKAGE_MANAGER: ${{ inputs.package-manager }}
         run: |
-          case "${{ inputs.package-manager }}" in
+          case "$PACKAGE_MANAGER" in
             npm)  npm ci ;;
             yarn) yarn --frozen-lockfile ;;
             pnpm) corepack enable && pnpm install --frozen-lockfile ;;
