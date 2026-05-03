@@ -37,6 +37,10 @@ on:
         description: 'Git ref for etherform scripts checkout (default: main)'
         type: string
         default: 'main'
+      environment:
+        description: 'GitHub Environment to scope the deploy to (e.g. for required reviewers + scoped secrets). Empty disables the gate.'
+        type: string
+        default: 'testnet'
     secrets:
       PRIVATE_KEY:
         required: true
@@ -50,6 +54,7 @@ jobs:
   deploy-testnet:
     name: Deploy to Testnet
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     outputs:
       network_name: ${{ steps.network.outputs.network_name }}
       blockscout_url: ${{ steps.network.outputs.blockscout_url }}
