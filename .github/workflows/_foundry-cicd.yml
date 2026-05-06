@@ -441,6 +441,9 @@ jobs:
   deploy-testnet:
     name: Deploy Testnet
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     needs: [detect-changes, ci, upgrade-safety]
     if: |
       always() &&
@@ -524,6 +527,20 @@ jobs:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
           SUMMARY_TITLE: Testnet Deployment Summary
         run: bash .etherform/scripts/deploy/deployment-summary.sh
+
+      - name: Write deployment comment
+        if: github.event_name == 'pull_request'
+        env:
+          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
+          NETWORK_NAME: ${{ steps.network.outputs.network_name }}
+        run: bash .etherform/scripts/deploy/deployment-comment.sh
+
+      - name: Post deployment comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: testnet-deployment-${{ steps.network.outputs.network_name }}
+          path: deployment-comment.md
 
   verify-contracts:
     name: Verify Contracts
