@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Parse Foundry broadcast artifacts after deployment.
-# Finds run-latest.json, extracts chain ID, writes deployment-summary.txt.
+# Finds run-latest.json and extracts the chain ID.
 #
 # Outputs (via $GITHUB_OUTPUT):
 #   broadcast_file  — path to the broadcast JSON
@@ -19,4 +19,4 @@ CHAIN_ID=$(echo "$BROADCAST_FILE" | sed -E 's|.*/([0-9]+)/run-latest\.json$|\1|'
 echo "chain_id=$CHAIN_ID" >> "$GITHUB_OUTPUT"
 echo "Deployed to chain ID: $CHAIN_ID"
 
-jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE" | tee deployment-summary.txt
+jq -r '.transactions[] | select(.transactionType == "CREATE") | "\(.contractName): \(.contractAddress)"' "$BROADCAST_FILE"
