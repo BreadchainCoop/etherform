@@ -64,10 +64,10 @@ on:
         description: 'Path pattern to exclude from coverage (--no-match-path)'
         type: string
         default: ''
-      coverage-source-filter:
-        description: 'Grep filter for source files in coverage report'
+      coverage-source-prefix:
+        description: 'Path prefix for source files included in coverage report (lcov SF: matching)'
         type: string
-        default: ' src/'
+        default: 'src/'
       coverage-post-comment:
         description: 'Post coverage summary as a sticky PR comment'
         type: boolean
@@ -308,17 +308,18 @@ jobs:
       - name: Run coverage
         env:
           RPC_URL: ${{ secrets.RPC_URL }}
+          COVERAGE_EXCLUDE_PATHS: ${{ inputs.coverage-exclude-paths }}
         run: |
-          if [[ -n "${{ inputs.coverage-exclude-paths }}" ]]; then
-            forge coverage --no-match-path "${{ inputs.coverage-exclude-paths }}" 2>&1 | tee coverage-raw.txt
+          if [[ -n "$COVERAGE_EXCLUDE_PATHS" ]]; then
+            forge coverage --report lcov --no-match-path "$COVERAGE_EXCLUDE_PATHS"
           else
-            forge coverage 2>&1 | tee coverage-raw.txt
+            forge coverage --report lcov
           fi
 
-      - name: Extract summary table
+      - name: Extract summary
         id: summary
         env:
-          COVERAGE_SOURCE_FILTER: ${{ inputs.coverage-source-filter }}
+          COVERAGE_SOURCE_PREFIX: ${{ inputs.coverage-source-prefix }}
         run: bash .etherform/scripts/coverage/extract-summary.sh
 
       - name: Post coverage comment
