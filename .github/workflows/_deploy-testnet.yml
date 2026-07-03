@@ -1,6 +1,11 @@
-# Reusable testnet deployment workflow
+# Reusable deployment workflow (testnet or mainnet)
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_deploy-testnet.yml@main
-name: Deploy Testnet (Reusable)
+#
+# The target network is determined by the RPC_URL secret; the chain ID from the
+# broadcast artifact is matched against the network config to resolve the
+# explorer URL and network name. Set the `environment` input to run the deploy
+# under a protected GitHub Environment (e.g. for mainnet deploys on merge).
+name: Deploy (Reusable)
 
 on:
   workflow_call:
@@ -13,10 +18,6 @@ on:
         description: 'Path to network configuration JSON'
         type: string
         default: '.github/deploy-networks.json'
-      network-index:
-        description: 'Index in testnets array to deploy to'
-        type: number
-        default: 0
       indexing-wait:
         description: 'Seconds to wait for indexer before verification'
         type: number
@@ -25,6 +26,10 @@ on:
         description: 'Verify deployed contracts on Blockscout'
         type: boolean
         default: true
+      environment:
+        description: 'GitHub Environment to deploy under (empty = none); use a protected environment for mainnet'
+        type: string
+        default: ''
       package-manager:
         description: 'Package manager for Node.js dependencies (none, npm, yarn, pnpm)'
         type: string
@@ -32,11 +37,15 @@ on:
       node-version:
         description: 'Node.js version for package installation'
         type: string
-        default: '20'
-      etherform-ref:
-        description: 'Git ref for etherform scripts checkout (default: main)'
+        default: '22'
+      foundry-version:
+        description: 'Foundry version to install (stable, nightly, or a specific version)'
         type: string
-        default: 'main'
+        default: 'stable'
+      etherform-ref:
+        description: 'Git ref for etherform scripts checkout (default: the ref this workflow was called at)'
+        type: string
+        default: ''
     secrets:
       PRIVATE_KEY:
         required: true
@@ -47,9 +56,14 @@ on:
         required: false
 
 jobs:
-  deploy-testnet:
-    name: Deploy to Testnet
+  deploy:
+    name: Deploy Contracts
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    # Serialize deploys per ref; never cancel an in-flight deploy
+    concurrency:
+      group: etherform-deploy-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -59,80 +73,74 @@ jobs:
       broadcast_file: ${{ steps.parse.outputs.broadcast_file }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           submodules: recursive
 
-      - name: Checkout etherform scripts
-        uses: actions/checkout@v4
+      - name: Checkout etherform
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: BreadchainCoop/etherform
-          ref: ${{ inputs.etherform-ref }}
+          ref: ${{ inputs.etherform-ref || job.workflow_sha }}
           path: .etherform
-          sparse-checkout: scripts
+          sparse-checkout: |
+            scripts
+            .github/actions
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Setup Node.js
-        if: inputs.package-manager != 'none'
-        uses: actions/setup-node@v4
+      - name: Setup toolchain
+        uses: ./.etherform/.github/actions/setup
         with:
+          foundry-version: ${{ inputs.foundry-version }}
+          package-manager: ${{ inputs.package-manager }}
           node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
-
-      - name: Install dependencies
-        if: inputs.package-manager != 'none'
-        run: |
-          case "${{ inputs.package-manager }}" in
-            npm)  npm ci ;;
-            yarn) yarn --frozen-lockfile ;;
-            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
-          esac
-
-      - name: Read network config
-        id: network
-        run: |
-          BLOCKSCOUT_URL=$(jq -r '.testnets[${{ inputs.network-index }}].blockscout_url' ${{ inputs.network-config-path }})
-          NETWORK_NAME=$(jq -r '.testnets[${{ inputs.network-index }}].name' ${{ inputs.network-config-path }})
-          echo "blockscout_url=$BLOCKSCOUT_URL" >> $GITHUB_OUTPUT
-          echo "network_name=$NETWORK_NAME" >> $GITHUB_OUTPUT
 
       - name: Deploy contracts
         env:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
           DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
+          DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
         run: |
           source .etherform/scripts/deploy/prepare-env.sh
-          forge script ${{ inputs.deploy-script }} \
+          forge script "$DEPLOY_SCRIPT" \
             --rpc-url "$RPC_URL" \
+            --private-key "$PRIVATE_KEY" \
             --broadcast \
             --slow \
             -vvvv
 
       - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
+        env:
+          INDEXING_WAIT: ${{ inputs.indexing-wait }}
+        run: sleep "$INDEXING_WAIT"
 
       - name: Parse deployment addresses
         id: parse
+        env:
+          DEPLOY_SCRIPT: ${{ inputs.deploy-script }}
         run: bash .etherform/scripts/deploy/parse-broadcast.sh
 
-      - name: Save deployment artifacts
-        run: |
-          mkdir -p deployments/${{ steps.network.outputs.network_name }}
-          BROADCAST_FILE="${{ steps.parse.outputs.broadcast_file }}"
-          jq '{contracts: [.transactions[] | select(.transactionType == "CREATE") | {sourcePathAndName: "src/\(.contractName).sol:\(.contractName)", address: .contractAddress}]}' "$BROADCAST_FILE" \
-            > deployments/${{ steps.network.outputs.network_name }}/deployment.json
+      - name: Resolve network from chain ID
+        id: network
+        env:
+          CHAIN_ID: ${{ steps.parse.outputs.chain_id }}
+          NETWORK_CONFIG: ${{ inputs.network-config-path }}
+        run: bash .etherform/scripts/deploy/resolve-network.sh
+
+      - name: Write deployment artifact
+        env:
+          BROADCAST_FILE: ${{ steps.parse.outputs.broadcast_file }}
+          NETWORK_NAME: ${{ steps.network.outputs.network_name }}
+        run: bash .etherform/scripts/deploy/write-deployment-json.sh
 
       - name: Upload deployment artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: deployment-${{ steps.network.outputs.network_name }}
           path: deployments/
 
       - name: Upload broadcast artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: broadcast
           path: broadcast/
@@ -140,7 +148,7 @@ jobs:
       - name: Create deployment summary
         env:
           BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-          SUMMARY_TITLE: Testnet Deployment Summary
+          SUMMARY_TITLE: Deployment Summary
         run: bash .etherform/scripts/deploy/deployment-summary.sh
 
       - name: Write deployment comment
@@ -152,7 +160,7 @@ jobs:
 
       - name: Post deployment comment
         if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405 # v2.9.4
         with:
           header: testnet-deployment-${{ steps.network.outputs.network_name }}
           path: deployment-comment.md
@@ -160,34 +168,40 @@ jobs:
   verify-contracts:
     name: Verify Contracts
     runs-on: ubuntu-latest
-    needs: [deploy-testnet]
+    needs: [deploy]
     if: inputs.verify-contracts
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           submodules: recursive
 
-      - name: Checkout etherform scripts
-        uses: actions/checkout@v4
+      - name: Checkout etherform
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           repository: BreadchainCoop/etherform
-          ref: ${{ inputs.etherform-ref }}
+          ref: ${{ inputs.etherform-ref || job.workflow_sha }}
           path: .etherform
-          sparse-checkout: scripts
+          sparse-checkout: |
+            scripts
+            .github/actions
 
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+      - name: Setup toolchain
+        uses: ./.etherform/.github/actions/setup
+        with:
+          foundry-version: ${{ inputs.foundry-version }}
+          package-manager: ${{ inputs.package-manager }}
+          node-version: ${{ inputs.node-version }}
 
       - name: Download broadcast artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: broadcast
           path: broadcast/
 
       - name: Verify contracts on Blockscout
         env:
-          BLOCKSCOUT_URL: ${{ needs.deploy-testnet.outputs.blockscout_url }}
+          BLOCKSCOUT_URL: ${{ needs.deploy.outputs.blockscout_url }}
           ETH_RPC_URL: ${{ secrets.RPC_URL }}
-          BROADCAST_FILE: ${{ needs.deploy-testnet.outputs.broadcast_file }}
+          BROADCAST_FILE: ${{ needs.deploy.outputs.broadcast_file }}
         run: bash .etherform/scripts/deploy/verify-blockscout.sh

@@ -10,7 +10,19 @@
       "hash": "0xdef456",
       "transactionType": "CREATE",
       "contractName": "MyProxy",
-      "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+      "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      "additionalContracts": [
+        {
+          "transactionType": "CREATE",
+          "address": "0x9999999999999999999999999999999999999999"
+        }
+      ]
+    },
+    {
+      "hash": "0x321cba",
+      "transactionType": "CREATE2",
+      "contractName": "MyFactory",
+      "contractAddress": "0x5555555555555555555555555555555555555555"
     },
     {
       "hash": "0x789012",
@@ -18,5 +30,6 @@
       "contractName": "MyProxy",
       "contractAddress": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
     }
-  ]
+  ],
+  "chain": 31337
 }

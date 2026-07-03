@@ -1,0 +1,36 @@
+# End-to-end test: runs the real _foundry-cicd.yml reusable workflow against
+# the fixture Foundry project in tests/fixtures/project. This exercises change
+# detection, the nested _ci.yml call (build, test, fmt, coverage + threshold),
+# and the graceful skip of upgrade safety when no upgrades.json exists.
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  fixture-cicd:
+    name: Fixture CI/CD
+    uses: ./.github/workflows/_foundry-cicd.yml
+    with:
+      working-directory: tests/fixtures/project
+      skip-if-no-changes: false
+      check-formatting: true
+      run-coverage: true
+      coverage-min-threshold: 90
+      coverage-post-comment: false
+
+  # _deploy-testnet.yml relies on `environment: <empty string>` meaning
+  # "no environment". This job fails loudly if GitHub ever changes that.
+  empty-environment-guard:
+    name: Empty Environment Guard
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'schedule' && 'never-used' || '' }}
+    steps:
+      - name: Confirm empty environment is accepted
+        run: echo "empty environment string is accepted"

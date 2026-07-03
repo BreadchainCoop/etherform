@@ -1,5 +1,13 @@
 # Technical Spec — Auto CI/CD: Testnet & Mainnet Deployments With Upgrade Safety Validation (Foundry + Blockscout)
 
+> **Status: partially superseded.** This is the original design document; the
+> implementation diverged in several ways. Upgrade safety uses the OpenZeppelin
+> upgrades-core CLI comparing against the base branch (not the
+> flattening/`ValidateUpgrade.s.sol` snapshot approach described below), and the
+> entry points are reusable workflows (`_foundry-cicd.yml` etc.), not a single
+> composite action. See the [README](../../README.md) for how things actually
+> work today, including mainnet deploys via protected GitHub Environments.
+
 ## 1. Background
 
 ### Problem Statement: What hurts today?

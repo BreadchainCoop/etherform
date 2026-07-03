@@ -1,5 +1,9 @@
 # All-in-one Foundry CI/CD reusable workflow
 # Usage: jobs.<job>.uses: BreadchainCoop/etherform/.github/workflows/_foundry-cicd.yml@main
+#
+# Thin orchestrator: change detection runs inline; CI, upgrade safety, and
+# deploy are delegated to the sibling reusable workflows (_ci.yml,
+# _upgrade-safety.yml, _deploy-testnet.yml) so the logic lives in one place.
 name: Foundry CI/CD
 
 on:
@@ -27,11 +31,19 @@ on:
         type: boolean
         default: true
       test-verbosity:
-        description: 'Test verbosity level (v, vv, vvv, vvvv)'
+        description: 'Test verbosity level (v, vv, vvv, vvvv, vvvvv)'
         type: string
         default: 'vvv'
+      working-directory:
+        description: 'Directory containing the Foundry project (applies to CI, coverage, Slither, Halmos; upgrade safety and deploy assume the repo root)'
+        type: string
+        default: '.'
 
-      # Node.js Dependency Options
+      # Toolchain Options
+      foundry-version:
+        description: 'Foundry version to install (stable, nightly, or a specific version)'
+        type: string
+        default: 'stable'
       package-manager:
         description: 'Package manager for Node.js dependencies (none, npm, yarn, pnpm)'
         type: string
@@ -39,7 +51,7 @@ on:
       node-version:
         description: 'Node.js version for package installation'
         type: string
-        default: '20'
+        default: '22'
 
       # Slither Options
       run-slither:
@@ -77,15 +89,29 @@ on:
         type: number
         default: 0
 
+      # Halmos Options
+      run-halmos:
+        description: 'Run Halmos symbolic execution'
+        type: boolean
+        default: false
+      halmos-version:
+        description: 'Halmos version to install (empty = latest)'
+        type: string
+        default: ''
+
       # Upgrade Safety Options
       upgrades-config:
-        description: 'Path to upgrade safety configuration (upgrades.json)'
+        description: 'Path to upgrade safety configuration (upgrades.json); the job is skipped when the file does not exist'
         type: string
         default: '.github/upgrades.json'
-      main-branch:
+      base-branch:
         description: 'Base branch for upgrade safety comparison'
         type: string
         default: 'main'
+      oz-upgrades-core-version:
+        description: 'Version of @openzeppelin/upgrades-core used for validation'
+        type: string
+        default: '1.44.2'
 
       # Deploy Options
       deploy-on-pr:
@@ -108,17 +134,12 @@ on:
         description: 'Verify deployed contracts on Blockscout'
         type: boolean
         default: true
-      # Halmos Options
-      run-halmos:
-        description: 'Run Halmos symbolic execution'
-        type: boolean
-        default: false
 
       # Etherform Options
       etherform-ref:
-        description: 'Git ref for etherform scripts checkout (default: main)'
+        description: 'Git ref for etherform scripts checkout (default: the ref this workflow was called at)'
         type: string
-        default: 'main'
+        default: ''
 
     secrets:
       PRIVATE_KEY:
@@ -138,444 +159,128 @@ jobs:
     outputs:
       contracts-changed: ${{ steps.filter.outputs.contracts }}
       should-run: ${{ steps.decide.outputs.should-run }}
+      upgrades-config-exists: ${{ steps.upgrades.outputs.exists }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          fetch-depth: 0
+          persist-credentials: true
 
       - name: Build paths filter
         id: paths
+        env:
+          CONTRACT_PATHS: ${{ inputs.contract-paths }}
         run: |
           # Convert newline-separated paths to YAML list format
-          YAML_PATHS=$(echo "${{ inputs.contract-paths }}" | sed '/^$/d' | sed 's/^/    - /')
-          echo "filter<<EOF" >> $GITHUB_OUTPUT
-          echo "contracts:" >> $GITHUB_OUTPUT
-          echo "$YAML_PATHS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          YAML_PATHS=$(printf '%s\n' "$CONTRACT_PATHS" | sed '/^$/d' | sed 's/^/    - /')
+          {
+            echo "filter<<EOF"
+            echo "contracts:"
+            echo "$YAML_PATHS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Check for contract changes
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         with:
           filters: ${{ steps.paths.outputs.filter }}
 
       - name: Decide whether to run
         id: decide
+        env:
+          SKIP_IF_NO_CHANGES: ${{ inputs.skip-if-no-changes }}
+          CONTRACTS_CHANGED: ${{ steps.filter.outputs.contracts }}
         run: |
-          if [[ "${{ inputs.skip-if-no-changes }}" == "false" ]]; then
+          if [[ "$SKIP_IF_NO_CHANGES" == "false" ]]; then
             echo "Change detection disabled, workflow will run"
-            echo "should-run=true" >> $GITHUB_OUTPUT
-          elif [[ "${{ steps.filter.outputs.contracts }}" == "true" ]]; then
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$CONTRACTS_CHANGED" == "true" ]]; then
             echo "Contract changes detected, workflow will run"
-            echo "should-run=true" >> $GITHUB_OUTPUT
+            echo "should-run=true" >> "$GITHUB_OUTPUT"
           else
             echo "No contract changes detected, skipping workflow"
-            echo "should-run=false" >> $GITHUB_OUTPUT
+            echo "should-run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for upgrades config
+        id: upgrades
+        env:
+          UPGRADES_CONFIG: ${{ inputs.upgrades-config }}
+        run: |
+          if [[ -f "$UPGRADES_CONFIG" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No $UPGRADES_CONFIG found — upgrade safety will be skipped"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
   ci:
-    name: Build & Test
-    runs-on: ubuntu-latest
+    name: CI
     needs: [detect-changes]
     if: needs.detect-changes.outputs.should-run == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Setup Node.js
-        if: inputs.package-manager != 'none'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
-
-      - name: Install dependencies
-        if: inputs.package-manager != 'none'
-        run: |
-          case "${{ inputs.package-manager }}" in
-            npm)  npm ci ;;
-            yarn) yarn --frozen-lockfile ;;
-            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
-          esac
-
-      - name: Show Forge version
-        run: forge --version
-
-      - name: Check formatting
-        if: inputs.check-formatting
-        run: forge fmt --check
-
-      - name: Build contracts
-        run: forge build
-
-      - name: Run tests
-        env:
-          RPC_URL: ${{ secrets.RPC_URL }}
-        run: forge test -${{ inputs.test-verbosity }}
-
-  slither:
-    name: Slither Analysis
-    runs-on: ubuntu-latest
-    needs: [detect-changes]
-    if: |
-      needs.detect-changes.outputs.should-run == 'true' &&
-      inputs.run-slither
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Setup Node.js
-        if: inputs.package-manager != 'none'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
-
-      - name: Install dependencies
-        if: inputs.package-manager != 'none'
-        run: |
-          case "${{ inputs.package-manager }}" in
-            npm)  npm ci ;;
-            yarn) yarn --frozen-lockfile ;;
-            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
-          esac
-
-      - name: Build for Slither
-        run: forge build --build-info --skip '*/test/**' '*/script/**' --force
-
-      - name: Run Slither
-        uses: crytic/slither-action@v0.4.0
-        with:
-          slither-config: ${{ inputs.slither-config }}
-          fail-on: ${{ inputs.slither-fail-on }}
-
-  coverage:
-    name: Coverage Report
-    runs-on: ubuntu-latest
-    needs: [detect-changes, ci]
-    if: |
-      always() &&
-      needs.detect-changes.outputs.should-run == 'true' &&
-      needs.ci.result == 'success' &&
-      inputs.run-coverage
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Checkout etherform scripts
-        uses: actions/checkout@v4
-        with:
-          repository: BreadchainCoop/etherform
-          ref: ${{ inputs.etherform-ref }}
-          path: .etherform
-          sparse-checkout: scripts
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Setup Node.js
-        if: inputs.package-manager != 'none'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
-
-      - name: Install dependencies
-        if: inputs.package-manager != 'none'
-        run: |
-          case "${{ inputs.package-manager }}" in
-            npm)  npm ci ;;
-            yarn) yarn --frozen-lockfile ;;
-            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
-          esac
-
-      - name: Show Forge version
-        run: forge --version
-
-      - name: Run coverage
-        env:
-          RPC_URL: ${{ secrets.RPC_URL }}
-        run: |
-          if [[ -n "${{ inputs.coverage-exclude-paths }}" ]]; then
-            forge coverage --no-match-path "${{ inputs.coverage-exclude-paths }}" 2>&1 | tee coverage-raw.txt
-          else
-            forge coverage 2>&1 | tee coverage-raw.txt
-          fi
-
-      - name: Extract summary table
-        id: summary
-        env:
-          COVERAGE_SOURCE_FILTER: ${{ inputs.coverage-source-filter }}
-        run: bash .etherform/scripts/coverage/extract-summary.sh
-
-      - name: Post coverage comment
-        if: inputs.coverage-post-comment && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          path: coverage-comment.md
-
-      - name: Check coverage threshold
-        if: inputs.coverage-min-threshold > 0
-        env:
-          THRESHOLD: ${{ inputs.coverage-min-threshold }}
-          LINES_PCT: ${{ steps.summary.outputs.lines_pct }}
-          STMTS_PCT: ${{ steps.summary.outputs.stmts_pct }}
-          BRANCH_PCT: ${{ steps.summary.outputs.branch_pct }}
-          FUNCS_PCT: ${{ steps.summary.outputs.funcs_pct }}
-        run: bash .etherform/scripts/coverage/check-threshold.sh
-
-  halmos:
-    name: Symbolic Execution
-    runs-on: ubuntu-latest
-    needs: [detect-changes]
-    if: |
-      needs.detect-changes.outputs.should-run == 'true' &&
-      inputs.run-halmos
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Setup Node.js
-        if: inputs.package-manager != 'none'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
-
-      - name: Install dependencies
-        if: inputs.package-manager != 'none'
-        run: |
-          case "${{ inputs.package-manager }}" in
-            npm)  npm ci ;;
-            yarn) yarn --frozen-lockfile ;;
-            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
-          esac
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install Halmos
-        run: pip install halmos
-
-      - name: Run Halmos
-        env:
-          RPC_URL: ${{ secrets.RPC_URL }}
-        run: halmos
-
+    uses: ./.github/workflows/_ci.yml
+    with:
+      check-formatting: ${{ inputs.check-formatting }}
+      test-verbosity: ${{ inputs.test-verbosity }}
+      working-directory: ${{ inputs.working-directory }}
+      foundry-version: ${{ inputs.foundry-version }}
+      package-manager: ${{ inputs.package-manager }}
+      node-version: ${{ inputs.node-version }}
+      run-slither: ${{ inputs.run-slither }}
+      slither-fail-on: ${{ inputs.slither-fail-on }}
+      slither-config: ${{ inputs.slither-config }}
+      run-coverage: ${{ inputs.run-coverage }}
+      coverage-exclude-paths: ${{ inputs.coverage-exclude-paths }}
+      coverage-source-filter: ${{ inputs.coverage-source-filter }}
+      coverage-post-comment: ${{ inputs.coverage-post-comment }}
+      coverage-min-threshold: ${{ inputs.coverage-min-threshold }}
+      run-halmos: ${{ inputs.run-halmos }}
+      halmos-version: ${{ inputs.halmos-version }}
+      etherform-ref: ${{ inputs.etherform-ref }}
+    secrets:
+      RPC_URL: ${{ secrets.RPC_URL }}
 
   upgrade-safety:
     name: Upgrade Safety
-    runs-on: ubuntu-latest
     needs: [detect-changes, ci]
-    if: needs.detect-changes.outputs.should-run == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Checkout etherform scripts
-        uses: actions/checkout@v4
-        with:
-          repository: BreadchainCoop/etherform
-          ref: ${{ inputs.etherform-ref }}
-          path: .etherform
-          sparse-checkout: scripts
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Setup Node.js
-        if: inputs.package-manager != 'none'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
-
-      - name: Install dependencies
-        if: inputs.package-manager != 'none'
-        run: |
-          case "${{ inputs.package-manager }}" in
-            npm)  npm ci ;;
-            yarn) yarn --frozen-lockfile ;;
-            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
-          esac
-
-      - name: Build contracts
-        run: forge build --build-info --extra-output storageLayout
-
-      - name: Validate upgrades config
-        env:
-          UPGRADES_CONFIG: ${{ inputs.upgrades-config }}
-          BASE_BRANCH: ${{ inputs.main-branch }}
-        run: bash .etherform/scripts/upgrade-safety/validate-config.sh
-
-      - name: Validate upgrade safety
-        env:
-          UPGRADES_CONFIG: ${{ inputs.upgrades-config }}
-          BASE_BRANCH: ${{ inputs.main-branch }}
-          PACKAGE_MANAGER: ${{ inputs.package-manager }}
-        run: bash .etherform/scripts/upgrade-safety/validate.sh
+    if: |
+      needs.detect-changes.outputs.should-run == 'true' &&
+      needs.detect-changes.outputs.upgrades-config-exists == 'true'
+    uses: ./.github/workflows/_upgrade-safety.yml
+    with:
+      upgrades-config: ${{ inputs.upgrades-config }}
+      base-branch: ${{ inputs.base-branch }}
+      oz-upgrades-core-version: ${{ inputs.oz-upgrades-core-version }}
+      package-manager: ${{ inputs.package-manager }}
+      node-version: ${{ inputs.node-version }}
+      foundry-version: ${{ inputs.foundry-version }}
+      etherform-ref: ${{ inputs.etherform-ref }}
 
   deploy-testnet:
     name: Deploy Testnet
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     needs: [detect-changes, ci, upgrade-safety]
+    # Deploys only on same-repo pull requests: fork PRs have no secrets, and
+    # a skipped upgrade-safety job (no upgrades.json) does not block deploys.
     if: |
       always() &&
       needs.detect-changes.outputs.should-run == 'true' &&
       needs.ci.result == 'success' &&
-      needs.upgrade-safety.result == 'success' &&
+      (needs.upgrade-safety.result == 'success' || needs.upgrade-safety.result == 'skipped') &&
       inputs.deploy-on-pr &&
-      github.event_name == 'pull_request'
-    outputs:
-      blockscout_url: ${{ steps.network.outputs.blockscout_url }}
-      broadcast_file: ${{ steps.parse.outputs.broadcast_file }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Checkout etherform scripts
-        uses: actions/checkout@v4
-        with:
-          repository: BreadchainCoop/etherform
-          ref: ${{ inputs.etherform-ref }}
-          path: .etherform
-          sparse-checkout: scripts
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Setup Node.js
-        if: inputs.package-manager != 'none'
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.package-manager }}
-
-      - name: Install dependencies
-        if: inputs.package-manager != 'none'
-        run: |
-          case "${{ inputs.package-manager }}" in
-            npm)  npm ci ;;
-            yarn) yarn --frozen-lockfile ;;
-            pnpm) corepack enable && pnpm install --frozen-lockfile ;;
-          esac
-
-      - name: Deploy contracts
-        env:
-          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
-          RPC_URL: ${{ secrets.RPC_URL }}
-          DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
-        run: |
-          source .etherform/scripts/deploy/prepare-env.sh
-          forge script "${{ inputs.deploy-script }}" \
-            --rpc-url "$RPC_URL" \
-            --private-key "$PRIVATE_KEY" \
-            --broadcast \
-            --slow \
-            -vvvv
-
-      - name: Wait for indexing
-        run: sleep ${{ inputs.indexing-wait }}
-
-      - name: Parse deployment addresses
-        id: parse
-        run: bash .etherform/scripts/deploy/parse-broadcast.sh
-
-      - name: Upload broadcast artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: broadcast
-          path: broadcast/
-
-      - name: Resolve Blockscout URL from chain ID
-        id: network
-        env:
-          CHAIN_ID: ${{ steps.parse.outputs.chain_id }}
-          NETWORK_CONFIG: ${{ inputs.network-config-path }}
-        run: bash .etherform/scripts/deploy/resolve-network.sh
-
-      - name: Create deployment summary
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-          SUMMARY_TITLE: Testnet Deployment Summary
-        run: bash .etherform/scripts/deploy/deployment-summary.sh
-
-      - name: Write deployment comment
-        if: github.event_name == 'pull_request'
-        env:
-          BLOCKSCOUT_URL: ${{ steps.network.outputs.blockscout_url }}
-          NETWORK_NAME: ${{ steps.network.outputs.network_name }}
-        run: bash .etherform/scripts/deploy/deployment-comment.sh
-
-      - name: Post deployment comment
-        if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: testnet-deployment-${{ steps.network.outputs.network_name }}
-          path: deployment-comment.md
-
-  verify-contracts:
-    name: Verify Contracts
-    runs-on: ubuntu-latest
-    needs: [deploy-testnet]
-    if: |
-      always() &&
-      needs.deploy-testnet.result == 'success' &&
-      inputs.verify-contracts
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Checkout etherform scripts
-        uses: actions/checkout@v4
-        with:
-          repository: BreadchainCoop/etherform
-          ref: ${{ inputs.etherform-ref }}
-          path: .etherform
-          sparse-checkout: scripts
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Download broadcast artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: broadcast
-          path: broadcast/
-
-      - name: Verify contracts on Blockscout
-        env:
-          BLOCKSCOUT_URL: ${{ needs.deploy-testnet.outputs.blockscout_url }}
-          ETH_RPC_URL: ${{ secrets.RPC_URL }}
-          BROADCAST_FILE: ${{ needs.deploy-testnet.outputs.broadcast_file }}
-        run: bash .etherform/scripts/deploy/verify-blockscout.sh
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/_deploy-testnet.yml
+    with:
+      deploy-script: ${{ inputs.deploy-script }}
+      network-config-path: ${{ inputs.network-config-path }}
+      indexing-wait: ${{ inputs.indexing-wait }}
+      verify-contracts: ${{ inputs.verify-contracts }}
+      package-manager: ${{ inputs.package-manager }}
+      node-version: ${{ inputs.node-version }}
+      foundry-version: ${{ inputs.foundry-version }}
+      etherform-ref: ${{ inputs.etherform-ref }}
+    secrets:
+      PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+      RPC_URL: ${{ secrets.RPC_URL }}
+      DEPLOY_ENV_VARS: ${{ secrets.DEPLOY_ENV_VARS }}
