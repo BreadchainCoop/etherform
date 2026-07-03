@@ -58,7 +58,7 @@ fi
 OZ_DIR=$(mktemp -d)
 echo "Installing @openzeppelin/upgrades-core@${OZ_UPGRADES_CORE_VERSION}..."
 (cd "$OZ_DIR" && npm init -y > /dev/null 2>&1 \
-  && npm install --no-audit --no-fund "@openzeppelin/upgrades-core@${OZ_UPGRADES_CORE_VERSION}" > /dev/null)
+  && npm install --ignore-scripts --no-audit --no-fund "@openzeppelin/upgrades-core@${OZ_UPGRADES_CORE_VERSION}" > /dev/null)
 OZ_CLI="$OZ_DIR/node_modules/.bin/openzeppelin-upgrades-core"
 if [[ ! -x "$OZ_CLI" ]]; then
   echo "::error::Failed to install @openzeppelin/upgrades-core@${OZ_UPGRADES_CORE_VERSION}"
