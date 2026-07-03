@@ -1,0 +1,13 @@
+# Keeps the SHA-pinned actions in workflows and the composite setup action
+# fresh; Dependabot updates the pin and the trailing version comment together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+      - "/.github/actions/setup"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
