@@ -108,6 +108,10 @@ on:
         description: 'Base branch for upgrade safety comparison'
         type: string
         default: 'main'
+      main-branch:
+        description: 'DEPRECATED alias for base-branch. Set base-branch instead; when set, this overrides base-branch. Kept for backward compatibility and will be removed in a future release.'
+        type: string
+        default: ''
       oz-upgrades-core-version:
         description: 'Version of @openzeppelin/upgrades-core used for validation'
         type: string
@@ -215,6 +219,10 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Warn on deprecated inputs
+        if: inputs.main-branch != ''
+        run: echo "::warning::The 'main-branch' input is deprecated; rename it to 'base-branch'. It still works for now and overrides base-branch, but will be removed in a future release."
+
   ci:
     name: CI
     needs: [detect-changes]
@@ -250,7 +258,8 @@ jobs:
     uses: ./.github/workflows/_upgrade-safety.yml
     with:
       upgrades-config: ${{ inputs.upgrades-config }}
-      base-branch: ${{ inputs.base-branch }}
+      # main-branch is a deprecated alias; when set it overrides base-branch
+      base-branch: ${{ inputs.main-branch != '' && inputs.main-branch || inputs.base-branch }}
       oz-upgrades-core-version: ${{ inputs.oz-upgrades-core-version }}
       package-manager: ${{ inputs.package-manager }}
       node-version: ${{ inputs.node-version }}

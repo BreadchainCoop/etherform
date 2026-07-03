@@ -435,8 +435,11 @@ The all-in-one workflow accepts all inputs from the above workflows (except `env
 | `skip-if-no-changes` | boolean | `true` | Skip if no contract files changed |
 | `contract-paths` | string | `src/**`, `script/**`, etc. | Paths to watch for changes |
 | `deploy-on-pr` | boolean | `false` | Deploy to testnet on PR |
+| `main-branch` | string | `''` | **Deprecated** alias for `base-branch`; when set it overrides `base-branch`. Emits a warning. Prefer `base-branch`. |
 
 Internally it calls `_ci.yml`, `_upgrade-safety.yml`, and `_deploy-testnet.yml` as nested reusable workflows, so check names appear as e.g. `CI/CD / ci / Build & Test`. The upgrade-safety job runs only when the `upgrades-config` file exists; deploys run only for same-repo pull requests.
+
+> **Deprecation:** the upgrade-safety base branch input was renamed `main-branch` → `base-branch` for consistency with `_upgrade-safety.yml`. `main-branch` still works (it overrides `base-branch` and logs a deprecation warning), so existing callers are not broken; migrate when convenient.
 
 All workflows also accept `etherform-ref` to override which etherform ref the bash scripts are checked out from. By default the scripts come from the same commit as the workflow you call (`job.workflow_sha`), so this is only needed for unusual setups.
 
