@@ -30,15 +30,24 @@ fi
 # Normalize URL once (strip trailing slash) to avoid double-slash in API calls
 BLOCKSCOUT_URL="${BLOCKSCOUT_URL%/}"
 
-# Collect all CREATE contracts
+# Collect all named CREATE/CREATE2 contracts. Nested deployments
+# (additionalContracts) have no contract name in the broadcast artifact and
+# cannot be verified by name — parse-broadcast.sh warns about them.
 CONTRACTS=()
 while read -r tx; do
   name=$(echo "$tx" | jq -r '.contractName')
   addr=$(echo "$tx" | jq -r '.contractAddress')
   CONTRACTS+=("${name}:${addr}")
-done < <(jq -c '.transactions[] | select(.transactionType == "CREATE")' "$BROADCAST_FILE")
+done < <(jq -c '.transactions[]
+  | select(.transactionType == "CREATE" or .transactionType == "CREATE2")
+  | select(.contractName != null)' "$BROADCAST_FILE")
 
 echo "Found ${#CONTRACTS[@]} contracts to verify"
+
+if [[ ${#CONTRACTS[@]} -eq 0 ]]; then
+  echo "::warning::No named CREATE/CREATE2 deployments found in $BROADCAST_FILE — nothing to verify"
+  exit 0
+fi
 
 # Phase 1: Submit all contracts for verification (no --watch)
 for entry in "${CONTRACTS[@]}"; do

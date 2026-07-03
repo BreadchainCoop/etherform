@@ -1,0 +1,10 @@
+# actionlint's context schema lags behind GitHub: job.workflow_sha /
+# job.workflow_ref (the SHA/ref of the reusable workflow file that defines the
+# current job) are documented at
+# https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+# but not yet in actionlint's `job` context type.
+paths:
+  .github/workflows/**/*.yml:
+    ignore:
+      - 'property "workflow_sha" is not defined in object type'
+      - 'property "workflow_ref" is not defined in object type'

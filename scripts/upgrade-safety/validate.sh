@@ -4,11 +4,15 @@ set -euo pipefail
 # Contracts without an explicit reference are compared against the base branch.
 # Contracts with an explicit reference are compared within the current build.
 #
+# Each contract entry may set "options": an array of extra CLI arguments passed
+# to the OZ validate command, e.g. ["--unsafeAllow", "delegatecall"].
+#
 # Env inputs:
-#   UPGRADES_CONFIG   — required, path to upgrades.json
-#   BASE_BRANCH       — required, branch name to compare against
-#   PACKAGE_MANAGER   — required, one of: none, npm, yarn, pnpm
-#   CURRENT_BUILD     — optional, default "out/build-info"
+#   UPGRADES_CONFIG          — required, path to upgrades.json
+#   BASE_BRANCH              — required, branch name to compare against
+#   PACKAGE_MANAGER          — required, one of: none, npm, yarn, pnpm
+#   CURRENT_BUILD            — optional, default "out/build-info"
+#   OZ_UPGRADES_CORE_VERSION — optional, default 1.44.2
 
 : "${UPGRADES_CONFIG:?UPGRADES_CONFIG is required}"
 : "${BASE_BRANCH:?BASE_BRANCH is required}"
@@ -49,6 +53,25 @@ if [[ "$CONTRACT_COUNT" -eq 0 ]]; then
   } >> "$GITHUB_STEP_SUMMARY"
   exit 0
 fi
+
+# Install the OZ CLI once instead of resolving it via npx per contract
+OZ_DIR=$(mktemp -d)
+echo "Installing @openzeppelin/upgrades-core@${OZ_UPGRADES_CORE_VERSION}..."
+(cd "$OZ_DIR" && npm init -y > /dev/null 2>&1 \
+  && npm install --ignore-scripts --no-audit --no-fund "@openzeppelin/upgrades-core@${OZ_UPGRADES_CORE_VERSION}" > /dev/null)
+OZ_CLI="$OZ_DIR/node_modules/.bin/openzeppelin-upgrades-core"
+if [[ ! -x "$OZ_CLI" ]]; then
+  echo "::error::Failed to install @openzeppelin/upgrades-core@${OZ_UPGRADES_CORE_VERSION}"
+  exit 1
+fi
+
+cleanup() {
+  if [[ -n "${BASE_DIR:-}" ]]; then
+    git worktree remove "$BASE_DIR" --force 2>/dev/null || true
+  fi
+  rm -rf "$OZ_DIR"
+}
+trap cleanup EXIT
 
 # Check if any contracts need base branch comparison (no explicit reference)
 NEEDS_BASE=false
@@ -107,16 +130,35 @@ while IFS= read -r entry; do
   REF_VALUE=$(echo "$entry" | jq -c '.reference // empty')
   CONTRACT_PATH="${CONTRACT%%:*}"
 
+  # Optional extra CLI arguments for this contract (e.g. --unsafeAllow delegatecall).
+  # Values are passed as an argv array (never through a shell), the pattern
+  # check just rejects obviously malformed entries early.
+  EXTRA_ARGS=()
+  OPTIONS_OK=true
+  while IFS= read -r opt; do
+    if [[ ! "$opt" =~ ^(--)?[A-Za-z0-9][A-Za-z0-9,=_-]*$ ]]; then
+      echo "::error::Invalid option for $CONTRACT in $UPGRADES_CONFIG: $opt"
+      OPTIONS_OK=false
+      break
+    fi
+    EXTRA_ARGS+=("$opt")
+  done < <(echo "$entry" | jq -r '.options // [] | .[]')
+
   echo "::group::Validating $CONTRACT"
 
-  if [[ -z "$REF_VALUE" || "$REF_VALUE" == "null" ]]; then
+  if [[ "$OPTIONS_OK" != "true" ]]; then
+    SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (invalid options) | **FAIL** |"$'\n'
+    FAILED=$((FAILED + 1))
+
+  elif [[ -z "$REF_VALUE" || "$REF_VALUE" == "null" ]]; then
     # === Base branch comparison (default) ===
     if [[ -n "$BASE_BUILD" ]] && git show "origin/${BASE_BRANCH}:${CONTRACT_PATH}" > /dev/null 2>&1; then
       # Contract exists on base branch — compare storage layouts
-      if OUTPUT=$(npx @openzeppelin/upgrades-core@"$OZ_UPGRADES_CORE_VERSION" validate "$CURRENT_BUILD" \
+      if OUTPUT=$("$OZ_CLI" validate "$CURRENT_BUILD" \
           --contract "$CONTRACT" \
           --reference "base-build-info:${CONTRACT}" \
-          --referenceBuildInfoDirs "$BASE_BUILD" 2>&1); then
+          --referenceBuildInfoDirs "$BASE_BUILD" \
+          ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1); then
         echo "$OUTPUT"
         SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${BASE_BRANCH}\` branch | Pass |"$'\n'
         PASSED=$((PASSED + 1))
@@ -128,8 +170,9 @@ while IFS= read -r entry; do
     else
       # Contract doesn't exist on base branch or base build failed — validate upgradeability only
       echo "Contract not found on $BASE_BRANCH or base build unavailable, validating upgradeability only..."
-      if OUTPUT=$(npx @openzeppelin/upgrades-core@"$OZ_UPGRADES_CORE_VERSION" validate "$CURRENT_BUILD" \
-          --contract "$CONTRACT" 2>&1); then
+      if OUTPUT=$("$OZ_CLI" validate "$CURRENT_BUILD" \
+          --contract "$CONTRACT" \
+          ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1); then
         echo "$OUTPUT"
         SUMMARY="${SUMMARY}| \`${CONTRACT}\` | (new contract) | Pass |"$'\n'
         PASSED=$((PASSED + 1))
@@ -143,9 +186,10 @@ while IFS= read -r entry; do
   elif echo "$REF_VALUE" | jq -e 'type == "string"' > /dev/null 2>&1; then
     # === Contract qualifier reference ===
     QUALIFIER=$(echo "$entry" | jq -r '.reference')
-    if OUTPUT=$(npx @openzeppelin/upgrades-core@"$OZ_UPGRADES_CORE_VERSION" validate "$CURRENT_BUILD" \
+    if OUTPUT=$("$OZ_CLI" validate "$CURRENT_BUILD" \
         --contract "$CONTRACT" \
-        --reference "$QUALIFIER" 2>&1); then
+        --reference "$QUALIFIER" \
+        ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1); then
       echo "$OUTPUT"
       SUMMARY="${SUMMARY}| \`${CONTRACT}\` | \`${QUALIFIER}\` | Pass |"$'\n'
       PASSED=$((PASSED + 1))
@@ -163,11 +207,6 @@ while IFS= read -r entry; do
 
   echo "::endgroup::"
 done < <(jq -c '.contracts[]' "$UPGRADES_CONFIG")
-
-# Clean up worktree
-if [[ -n "$BASE_DIR" ]]; then
-  git worktree remove "$BASE_DIR" --force 2>/dev/null || true
-fi
 
 # Write Step Summary
 {

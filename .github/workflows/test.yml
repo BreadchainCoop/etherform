@@ -3,43 +3,57 @@ name: Test Scripts
 on:
   push:
     branches: [main]
-    paths: ['scripts/**', 'tests/**', '.github/workflows/test.yml']
+    paths: ['scripts/**', 'tests/**', '.github/**']
   pull_request:
-    paths: ['scripts/**', 'tests/**', '.github/workflows/test.yml']
+    paths: ['scripts/**', 'tests/**', '.github/**']
+
+permissions:
+  contents: read
 
 jobs:
+  actionlint:
+    name: Workflow Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Run actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.7
+          # From actionlint_1.7.7_checksums.txt on the GitHub release
+          ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          curl -sSfLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | sha256sum -c -
+          tar xzf "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" actionlint
+          ./actionlint -color
+
   shellcheck:
     name: ShellCheck Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Run ShellCheck on all scripts
+      - name: Run ShellCheck on scripts
         run: find scripts/ -name '*.sh' -exec shellcheck -s bash {} +
+
+      # Tests intentionally export vars inside subshells for isolation, which
+      # trips the info-level SC2030/SC2031 checks
+      - name: Run ShellCheck on tests
+        run: find tests/ -name '*.sh' -exec shellcheck -s bash --severity=warning {} +
 
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Test prepare-env
-        run: bash tests/test-prepare-env.sh
-
-      - name: Test parse-broadcast
-        run: bash tests/test-parse-broadcast.sh
-
-      - name: Test resolve-network
-        run: bash tests/test-resolve-network.sh
-
-      - name: Test deployment-summary
-        run: bash tests/test-deployment-summary.sh
-
-      - name: Test deployment-comment
-        run: bash tests/test-deployment-comment.sh
-
-      - name: Test extract-summary
-        run: bash tests/test-extract-summary.sh
-
-      - name: Test check-threshold
-        run: bash tests/test-check-threshold.sh
+      - name: Run all unit tests
+        run: |
+          FAILED=0
+          for t in tests/test-*.sh; do
+            echo "::group::$t"
+            bash "$t" || FAILED=1
+            echo "::endgroup::"
+          done
+          exit "$FAILED"

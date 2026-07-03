@@ -28,8 +28,14 @@ total_stmts_hit=0; total_stmts_all=0
 total_branch_hit=0; total_branch_all=0
 total_funcs_hit=0; total_funcs_all=0
 
+# Pull "hit total" out of a cell like "82.35% (14/17)". POSIX sed (no GNU
+# grep -P) so the test suite also runs on macOS.
+extract() {
+  out=$(echo "$1" | sed -n -E 's|.*\(([0-9]+)/([0-9]+)\).*|\1 \2|p')
+  echo "${out:-0 0}"
+}
+
 while IFS='|' read -r _ file lines stmts branches funcs _; do
-  extract() { echo "$1" | grep -oP '\(\K[0-9]+/[0-9]+' | tr '/' ' '; }
   read -r lh lt <<< "$(extract "$lines")"
   read -r sh st <<< "$(extract "$stmts")"
   read -r bh bt <<< "$(extract "$branches")"

@@ -6,3 +6,7 @@
 
 # Worktrees
 .conductor/
+
+# Fixture project build artifacts
+tests/fixtures/project/out/
+tests/fixtures/project/cache/

@@ -1,0 +1,20 @@
+Compiler run successful!
+Analysing contracts...
+Running tests...
+
+Ran 4 tests for test/Counter.t.sol:CounterTest
+[PASS] test_Decrement() (gas: 30157)
+[PASS] test_DecrementRevertsAtZero() (gas: 7633)
+[PASS] test_Increment() (gas: 28723)
+[PASS] test_SetNumber() (gas: 29062)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 283.08µs (367.87µs CPU time)
+
+Ran 1 test suite in 4.43ms (283.08µs CPU time): 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+╭-----------------+---------------+---------------+---------------+---------------╮
+| File            | % Lines       | % Statements  | % Branches    | % Funcs       |
++=================================================================================+
+| src/Counter.sol | 100.00% (7/7) | 100.00% (4/4) | 100.00% (2/2) | 100.00% (3/3) |
+|-----------------+---------------+---------------+---------------+---------------|
+| Total           | 100.00% (7/7) | 100.00% (4/4) | 100.00% (2/2) | 100.00% (3/3) |
+╰-----------------+---------------+---------------+---------------+---------------╯

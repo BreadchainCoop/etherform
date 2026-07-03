@@ -56,5 +56,30 @@ echo "=== Testing scripts/coverage/extract-summary.sh ==="
   echo "PASS: generates coverage-comment.md"
 ) || { FAILURES=$((FAILURES + 1)); }
 
-echo "--- $((2 - FAILURES))/2 tests passed ---"
+# Test 3: Parses the forge >= 1.7 table format (=== header separator,
+# |--- row separators, Total row)
+(
+  TMPDIR=$(mktemp -d)
+  trap 'rm -rf "$TMPDIR"' EXIT
+  cd "$TMPDIR"
+
+  cp "$SCRIPT_DIR/tests/fixtures/coverage-raw-forge17.txt" coverage-raw.txt
+
+  export GITHUB_OUTPUT="$TMPDIR/github-output.txt"
+  export COVERAGE_SOURCE_FILTER=" src/"
+  touch "$GITHUB_OUTPUT"
+
+  bash "$SCRIPT_DIR/scripts/coverage/extract-summary.sh"
+
+  LINES_PCT=$(grep "lines_pct=" "$GITHUB_OUTPUT" | cut -d= -f2)
+  [[ "$LINES_PCT" == "100.00" ]] || { echo "FAIL: lines_pct=$LINES_PCT, expected 100.00"; cat "$GITHUB_OUTPUT"; exit 1; }
+  BRANCH_PCT=$(grep "branch_pct=" "$GITHUB_OUTPUT" | cut -d= -f2)
+  [[ "$BRANCH_PCT" == "100.00" ]] || { echo "FAIL: branch_pct=$BRANCH_PCT, expected 100.00"; exit 1; }
+  grep -q "Counter" coverage-comment.md || { echo "FAIL: Counter not in comment"; exit 1; }
+  grep -q "Total" coverage-comment.md && { echo "FAIL: Total row should be filtered out"; exit 1; }
+
+  echo "PASS: parses forge 1.7 table format"
+) || { FAILURES=$((FAILURES + 1)); }
+
+echo "--- $((3 - FAILURES))/3 tests passed ---"
 exit $FAILURES
